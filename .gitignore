@@ -8,3 +8,8 @@ target/
 .DS_Store
 node_modules/
 dist/
+.nuxt/
+.output/
+.data/
+# nuxt generate links ui/dist to .output/public
+ui/dist

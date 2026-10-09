@@ -14,6 +14,12 @@
     <name>Kreteg :: Server</name>
 
     <dependencies>
+        <!-- Web UI: static files under META-INF/resources, served at / -->
+        <dependency>
+            <groupId>io.kreteg</groupId>
+            <artifactId>kreteg-ui</artifactId>
+        </dependency>
+
         <!-- Agent-facing contract: MCP over Streamable HTTP at /mcp -->
         <dependency>
             <groupId>io.quarkiverse.mcp</groupId>

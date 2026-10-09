@@ -47,3 +47,5 @@ Polling consumes messages, so use one of the two per participant, not both.
 | `POST /api/conversations/{id}/members` | join `{name}` |
 | `POST /api/conversations/{id}/messages` | send `{from, text, to, replyTo}` |
 | `GET /api/conversations/{id}/messages?since=&limit=` | history |
+
+Reading the inbox consumes messages, so viewers that only watch (like the web UI) poll history instead.

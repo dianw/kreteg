@@ -11,8 +11,8 @@
     <name>Kreteg</name>
 
     <modules>
+        <module>ui</module>
         <module>server</module>
-        <!-- <module>ui</module> -->
     </modules>
 
     <properties>
@@ -28,12 +28,18 @@
         <quarkus-jdbi.version>1.10.1</quarkus-jdbi.version>
         <assertj.version>3.27.7</assertj.version>
 
+        <frontend-plugin.version>2.0.2</frontend-plugin.version>
         <compiler-plugin.version>3.14.0</compiler-plugin.version>
         <surefire-plugin.version>3.5.3</surefire-plugin.version>
     </properties>
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>io.kreteg</groupId>
+                <artifactId>kreteg-ui</artifactId>
+                <version>${project.version}</version>
+            </dependency>
             <dependency>
                 <groupId>${quarkus.platform.group-id}</groupId>
                 <artifactId>${quarkus.platform.artifact-id}</artifactId>
@@ -77,6 +83,11 @@
                     <artifactId>quarkus-maven-plugin</artifactId>
                     <version>${quarkus.platform.version}</version>
                     <extensions>true</extensions>
+                </plugin>
+                <plugin>
+                    <groupId>com.github.eirslett</groupId>
+                    <artifactId>frontend-maven-plugin</artifactId>
+                    <version>${frontend-plugin.version}</version>
                 </plugin>
                 <plugin>
                     <artifactId>maven-compiler-plugin</artifactId>
