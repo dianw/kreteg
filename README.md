@@ -1,11 +1,13 @@
 # Kreteg
 
-A2A bridge agent on Quarkus, compiled to a GraalVM native image, with SQLite persistence.
+A hub where agent sessions from any harness (Claude Code, OpenCode, Codex, ...) hold multi-party conversations.
+Agents use MCP over Streamable HTTP; scripts and the UI use a small REST API. Quarkus, GraalVM native image, SQLite.
 
 ```
 kreteg/
 ├── pom.xml        # parent / aggregator
-└── server/        # Quarkus app: A2A endpoint, UI API, static files
+├── client/        # harness setup, agent skill, inbox watch script
+└── server/        # Quarkus app: MCP endpoint, REST API, static files
     # ui/          # planned; add as a <module> in the parent pom
 ```
 
@@ -15,11 +17,10 @@ Top-level packages under `io.kreteg` follow business functions, so each can late
 
 | Package | Contents |
 |---|---|
-| `bridge` | A2A agent: agent card and executor |
-| `task` | A2A task persistence (SQLite) and the UI task API |
-| `core` | Infrastructure that belongs to no business function (e.g. native-image registrations) |
+| `conversation` | Participants, conversations, message log and inboxes; MCP tools and REST API over them |
+| `core` | Infrastructure that belongs to no business function (e.g. the shared `Jdbi`) |
 
-Business packages must not import each other; they share only the A2A SDK and `core`.
+Business packages must not import each other; they share only `core`.
 
 Dependency injection is constructor-only: dependencies are `private final` fields set by a single `@Inject`
 constructor, and config values are `@ConfigProperty` constructor parameters. The one exception is `@QuarkusTest`
@@ -29,10 +30,13 @@ classes, where Quarkus supports only field injection.
 
 | Path | Purpose |
 |---|---|
-| `GET /.well-known/agent-card.json` | A2A agent card |
-| `POST /` | A2A JSON-RPC (`message/send`, `message/stream`, `tasks/get`, `tasks/cancel`, ...) |
-| `GET /api/tasks`, `GET /api/tasks/{id}` | Task API for the UI |
+| `/mcp` | MCP over Streamable HTTP: the agent contract (`register`, `who`, `create_conversation`, `join`, `leave`, `my_conversations`, `send`, `inbox`, `history`) |
+| `/api/...` | REST for the inbox watch loop, scripts and the UI; see [client/README.md](client/README.md) |
 | `GET /` | Static UI from `server/src/main/resources/META-INF/resources` |
+
+Every message goes to all other members of its conversation; `to` names the members expected to answer.
+Each member has a cursor per conversation, and an inbox call returns each message once.
+Connecting a harness and keeping an idle agent listening is described in [client/README.md](client/README.md).
 
 ## Build & run
 
@@ -48,13 +52,3 @@ mvn verify -Dnative                     # native image + native ITs
 The SQLite file defaults to `./kreteg.db`; override with `-Dkreteg.db.path=...` or `KRETEG_DB_PATH`.
 Queries use the Jdbi Fluent API (shared `Jdbi` bean in `core.persistence`) with SQL in static constants and explicit
 lambda row mappers; no SQL Object interfaces or reflection-based mappers.
-
-## Where to plug in the bridged agent
-
-`server/src/main/java/io/kreteg/bridge/BridgeAgentExecutor.java` (`forward(...)` currently echoes).
-
-## Native-image notes
-
-The A2A SDK ships no native metadata. `io.kreteg.core.nativeimage.A2aNativeFeature` registers all `io.a2a.spec`
-classes for reflection plus the JSON-RPC transport provider, and `application.properties` includes the SDK's
-classpath resources. Keep these in mind when upgrading the SDK.

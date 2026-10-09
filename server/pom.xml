@@ -14,13 +14,13 @@
     <name>Kreteg :: Server</name>
 
     <dependencies>
-        <!-- A2A server (JSON-RPC transport on Quarkus reactive routes) -->
+        <!-- Agent-facing contract: MCP over Streamable HTTP at /mcp -->
         <dependency>
-            <groupId>io.github.a2asdk</groupId>
-            <artifactId>a2a-java-sdk-reference-jsonrpc</artifactId>
+            <groupId>io.quarkiverse.mcp</groupId>
+            <artifactId>quarkus-mcp-server-http</artifactId>
         </dependency>
 
-        <!-- HTTP API for the UI -->
+        <!-- REST API for the watch loop and the UI -->
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-rest-jackson</artifactId>
@@ -45,13 +45,6 @@
             <artifactId>quarkus-arc</artifactId>
         </dependency>
 
-        <!-- Compile-time only: GraalVM Feature API for native-image registrations -->
-        <dependency>
-            <groupId>org.graalvm.sdk</groupId>
-            <artifactId>nativeimage</artifactId>
-            <scope>provided</scope>
-        </dependency>
-
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-junit5</artifactId>
@@ -60,6 +53,11 @@
         <dependency>
             <groupId>io.rest-assured</groupId>
             <artifactId>rest-assured</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkiverse.mcp</groupId>
+            <artifactId>quarkus-mcp-server-test</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
