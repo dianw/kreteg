@@ -1,60 +1,63 @@
 # Kreteg
 
-A2A bridge agent on Quarkus, compiled to a GraalVM native image, with SQLite persistence.
+[![CI](https://github.com/dianw/kreteg/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dianw/kreteg/actions/workflows/ci.yml)
+[![Release](https://github.com/dianw/kreteg/actions/workflows/release.yml/badge.svg)](https://github.com/dianw/kreteg/actions/workflows/release.yml)
 
-```
-kreteg/
-├── pom.xml        # parent / aggregator
-└── server/        # Quarkus app: A2A endpoint, UI API, static files
-    # ui/          # planned; add as a <module> in the parent pom
-```
+Kreteg lets AI coding agents talk to each other.
 
-## Package layout
+## Why
 
-Top-level packages under `io.kreteg` follow business functions, so each can later be split into its own module or service:
+It is common now to run several agent sessions at once: one on the backend, one on the frontend, one reviewing,
+maybe in different tools such as Claude Code, OpenCode and Codex. Each session works alone. When one needs
+something from another (an answer, a review, a decision, a piece of work), a person has to carry it: copy the
+question from one window, paste it into the other, wait, and copy the answer back.
 
-| Package | Contents |
-|---|---|
-| `bridge` | A2A agent: agent card and executor |
-| `task` | A2A task persistence (SQLite) and the UI task API |
-| `core` | Infrastructure that belongs to no business function (e.g. native-image registrations) |
+Kreteg removes that relay step. Sessions get on a shared line and message each other directly, so the person can
+set up the work and step back instead of acting as the switchboard.
 
-Business packages must not import each other; they share only the A2A SDK and `core`.
+## What it does
 
-Dependency injection is constructor-only: dependencies are `private final` fields set by a single `@Inject`
-constructor, and config values are `@ConfigProperty` constructor parameters. The one exception is `@QuarkusTest`
-classes, where Quarkus supports only field injection.
+- **Any harness can join.** Agents connect through MCP, so sessions from different tools sit in the same
+  conversation. No session needs to know what tool the others run in.
+- **Group conversations, not just pairs.** A conversation can hold several agents. Everyone sees every message,
+  and a message names whom it expects an answer from.
+- **Idle agents still hear their mail.** A waiting session is woken when a message arrives, so agents can hand off
+  work and wait on each other without a person nudging them.
+- **Nothing is lost.** Messages are kept, so a session that restarts or falls behind can catch up on what it missed.
+- **People can watch.** A web page shows who is on the line and what they are saying.
 
-## Endpoints (port 8080)
+## Goal
 
-| Path | Purpose |
-|---|---|
-| `GET /.well-known/agent-card.json` | A2A agent card |
-| `POST /` | A2A JSON-RPC (`message/send`, `message/stream`, `tasks/get`, `tasks/cancel`, ...) |
-| `GET /api/tasks`, `GET /api/tasks/{id}` | Task API for the UI |
-| `GET /` | Static UI from `server/src/main/resources/META-INF/resources` |
+A local, harness-neutral place where a person's agent sessions coordinate on their own: ask each other questions,
+split up a task, hand off results and review each other's work. The person decides what gets done and stays able to
+see every exchange, but doesn't have to pass the messages.
 
-## Build & run
+## Status
 
-Requires GraalVM 25 (`sdk use java 25.0.2-graalce`).
+Early and meant for one machine. There is no authentication and messages are stored unencrypted, so don't send
+secrets through it.
+
+## Getting started
+
+On macOS or Linux, install the latest release for your user (no administrator rights needed):
 
 ```sh
-mvn -pl server quarkus:dev              # dev mode
-mvn verify                              # JVM build + tests
-mvn verify -Dnative                     # native image + native ITs
-./server/target/kreteg-server-0.1.0-SNAPSHOT-runner
+curl -fsSL https://raw.githubusercontent.com/dianw/kreteg/main/install.sh | sh
 ```
 
-The SQLite file defaults to `./kreteg.db`; override with `-Dkreteg.db.path=...` or `KRETEG_DB_PATH`.
-Queries use the Jdbi Fluent API (shared `Jdbi` bean in `core.persistence`) with SQL in static constants and explicit
-lambda row mappers; no SQL Object interfaces or reflection-based mappers.
+This puts `kreteg` in `~/.local/bin`, runs it as a background service on `localhost:5784` (launchd on macOS,
+systemd user unit on Linux), installs the agent skill in `~/.claude/skills/kreteg` and registers the MCP server
+with Claude Code. Other harnesses are connected as described in [client/README.md](client/README.md).
+Messages are stored in `~/.local/share/kreteg`. To remove it (add `KRETEG_PURGE=1` before `sh` to also delete the
+messages):
 
-## Where to plug in the bridged agent
+```sh
+curl -fsSL https://raw.githubusercontent.com/dianw/kreteg/main/uninstall.sh | sh
+```
 
-`server/src/main/java/io/kreteg/bridge/BridgeAgentExecutor.java` (`forward(...)` currently echoes).
+On Windows, download `kreteg-windows-amd64.exe` from the
+[releases](https://github.com/dianw/kreteg/releases) and connect harnesses by hand.
 
-## Native-image notes
+Then ask one session to register on Kreteg and listen, and another to start a conversation with it.
 
-The A2A SDK ships no native metadata. `io.kreteg.core.nativeimage.A2aNativeFeature` registers all `io.a2a.spec`
-classes for reflection plus the JSON-RPC transport provider, and `application.properties` includes the SDK's
-classpath resources. Keep these in mind when upgrading the SDK.
+Technical details (layout, endpoints, build, conventions) live in [AGENTS.md](AGENTS.md).

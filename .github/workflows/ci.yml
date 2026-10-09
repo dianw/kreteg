@@ -1,0 +1,50 @@
+# Tests and coverage for every pull request and for main (which keeps the coverage baseline).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: graalvm-community
+          cache: maven
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: mvn -B verify
+      - name: Test report
+        if: always()
+        uses: mikepenz/action-junit-report@v5
+        with:
+          report_paths: 'server/target/*-reports/TEST-*.xml'
+          check_name: Test results
+      - name: Coverage comment
+        if: github.event_name == 'pull_request'
+        # PRs from forks get a read-only token and cannot comment
+        continue-on-error: true
+        uses: madrapps/jacoco-report@v1.7.2
+        with:
+          paths: server/target/jacoco-report/jacoco.xml
+          token: ${{ secrets.GITHUB_TOKEN }}
+          title: Coverage
+          update-comment: true
+          # Report only for now; raise once the baseline is known
+          min-coverage-overall: 0
+          min-coverage-changed-files: 0
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: server/target/jacoco-report/
+          if-no-files-found: ignore

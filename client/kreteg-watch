@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Watch a participant's Kreteg inbox and print one block per message, for harnesses that turn command output into
+# notifications (e.g. Claude Code's Monitor tool). Polling consumes: while this runs, don't also call the inbox tool.
+#
+# Usage: kreteg-watch NAME [WAIT_SECONDS]
+# Env:   KRETEG_URL (default http://localhost:5784)
+set -uo pipefail
+
+if [[ $# -lt 1 || -z "$1" ]]; then
+  echo "usage: kreteg-watch NAME [WAIT_SECONDS]" >&2
+  exit 2
+fi
+
+url="${KRETEG_URL:-http://localhost:5784}"
+name="$1"
+wait="${2:-30}"
+backoff=1
+
+register() {
+  # Upsert: keeps the description set by the agent, refreshes last_seen
+  curl -sS --fail-with-body -X POST "$url/api/participants" -H 'Content-Type: application/json' \
+    -d "$(jq -n --arg n "$name" '{name: $n}')" >/dev/null
+}
+
+until register 2>/dev/null; do
+  echo "[kreteg] cannot reach $url, retrying in ${backoff}s" >&2
+  sleep "$backoff"; backoff=$(( backoff < 30 ? backoff * 2 : 30 ))
+done
+echo "[kreteg] watching inbox of $name at $url"
+backoff=1
+
+while true; do
+  if ! body=$(curl -sS --fail-with-body --max-time $(( wait + 15 )) \
+      "$url/api/participants/$name/inbox?wait=$wait" 2>&1); then
+    echo "[kreteg] poll failed (${body:0:200}), retrying in ${backoff}s" >&2
+    sleep "$backoff"; backoff=$(( backoff < 30 ? backoff * 2 : 30 ))
+    register 2>/dev/null
+    continue
+  fi
+  backoff=1
+  jq -r '.[] |
+    "[kreteg] \(.conversation) \"\(.title)\" | \(.id) from \(.from)"
+    + (if (.to | length) > 0 then " to \(.to | join(","))" else " to everyone" end)
+    + (if .replyTo then " | reply to \(.replyTo)" else "" end)
+    + "\n\(.text)\n"' <<<"$body"
+done

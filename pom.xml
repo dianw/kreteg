@@ -23,7 +23,7 @@
         <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
         <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
         <quarkus.platform.version>3.40.1</quarkus.platform.version>
-        <a2a.version>0.3.3.Final</a2a.version>
+        <quarkus-mcp-server.version>2.0.2</quarkus-mcp-server.version>
         <quarkus-jdbc-sqlite.version>3.0.11</quarkus-jdbc-sqlite.version>
         <quarkus-jdbi.version>1.10.1</quarkus-jdbi.version>
         <assertj.version>3.27.7</assertj.version>
@@ -42,9 +42,14 @@
                 <scope>import</scope>
             </dependency>
             <dependency>
-                <groupId>io.github.a2asdk</groupId>
-                <artifactId>a2a-java-sdk-reference-jsonrpc</artifactId>
-                <version>${a2a.version}</version>
+                <groupId>io.quarkiverse.mcp</groupId>
+                <artifactId>quarkus-mcp-server-http</artifactId>
+                <version>${quarkus-mcp-server.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.quarkiverse.mcp</groupId>
+                <artifactId>quarkus-mcp-server-test</artifactId>
+                <version>${quarkus-mcp-server.version}</version>
             </dependency>
             <dependency>
                 <groupId>io.quarkiverse.jdbc</groupId>
