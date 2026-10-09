@@ -16,3 +16,7 @@
 .kreteg-md pre { max-width: 100%; overflow-x: auto; font-size: 0.8rem; }
 .kreteg-md table { display: block; max-width: 100%; overflow-x: auto; }
 .kreteg-md :is(p, li) { line-height: 1.45; }
+
+/* @name mentions in message text; your own name stands out more, as in a messenger */
+.kreteg-mention { color: var(--ui-primary); font-weight: 500; }
+.kreteg-mention.is-me { background: color-mix(in oklab, var(--ui-primary) 15%, transparent); border-radius: 0.25rem; padding: 0 0.2rem; }

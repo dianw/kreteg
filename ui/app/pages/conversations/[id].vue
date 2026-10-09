@@ -116,6 +116,11 @@ const workingLine = computed(() => {
   return names.length ? `${names.join(', ')} ${names.length === 1 ? 'is' : 'are'} working…` : ''
 })
 
+// Members' @names are highlighted in message text. The names are part of the cache key, so a member joining or a
+// change of who you post as renders the messages again rather than reusing the earlier parse.
+const markdown = computed(() => messageMarkdown(conversation.value?.members ?? [], identity.name.value))
+const markdownKey = computed(() => `${identity.name.value}|${conversation.value?.members.join(',') ?? ''}`)
+
 /** One bubble per message, with what is needed to group consecutive messages like a messenger app. */
 const rows = computed(() => messages.value.map((m, i) => {
   const prev = messages.value[i - 1]
@@ -264,7 +269,7 @@ function firstLine(message: Message) {
                   <span v-for="t in row.unmentioned" :key="t" class="mr-1.5">@{{ t === identity.name.value ? 'You' : t }}</span>
                 </p>
 
-                <MDC :value="row.m.text" :cache-key="row.m.id" :parser-options="SAFE_MD" class="kreteg-md break-words" />
+                <MDC :value="row.m.text" :cache-key="`${row.m.id}|${markdownKey}`" :parser-options="markdown" class="kreteg-md break-words" />
                 <p class="flex items-center justify-end gap-1 text-[11px] leading-none text-muted">
                   <span :title="formatTime(row.m.createdAt)">{{ formatClock(row.m.createdAt) }}</span>
                   <UIcon v-if="row.receipt" :name="row.receipt.read ? 'i-lucide-check-check' : 'i-lucide-check'"
