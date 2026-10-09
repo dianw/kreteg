@@ -83,6 +83,12 @@ public class ConversationResource {
         return service.conversations(member);
     }
 
+    @GET
+    @Path("/conversations/{id}")
+    public ConversationDetail conversation(@PathParam("id") String id) {
+        return service.conversation(id);
+    }
+
     @POST
     @Path("/conversations/{id}/members")
     public Conversation join(@PathParam("id") String id, JoinRequest request) {

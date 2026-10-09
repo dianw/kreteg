@@ -95,6 +95,32 @@ class ConversationResourceTest {
     }
 
     @Test
+    void conversationShowsHowFarEachMemberHasRead() {
+        String conversation = create(alice, "receipts", bob, carol);
+        long seq = send(alice, conversation, Map.of("text", "anyone?")).getLong("seq");
+
+        inbox(bob, 0);
+        JsonPath detail = given().when().get("/api/conversations/{id}", conversation)
+                .then().statusCode(200)
+                .extract().jsonPath();
+
+        assertThat(detail.getString("title")).isEqualTo("receipts");
+        assertThat(detail.getList("members", String.class)).containsExactlyInAnyOrder(alice, bob, carol);
+        assertThat(detail.getMap("readSeq", String.class, Long.class))
+                .containsOnlyKeys(alice, bob, carol)
+                .containsEntry(bob, seq)
+                .containsEntry(carol, 0L)
+                // A sender's own messages never pass through their inbox
+                .containsEntry(alice, 0L);
+    }
+
+    @Test
+    void unknownConversationIsNotFound() {
+        given().when().get("/api/conversations/{id}", "c-missing")
+                .then().statusCode(404);
+    }
+
+    @Test
     void longPollReturnsWhenMessageArrives() throws Exception {
         String conversation = create(alice, "wake", bob);
 

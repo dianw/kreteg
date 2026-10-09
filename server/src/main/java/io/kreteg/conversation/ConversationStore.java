@@ -98,6 +98,9 @@ public class ConversationStore {
             ON CONFLICT (conversation_id, participant) DO NOTHING
             """;
 
+    private static final String SELECT_READ_SEQ =
+            "SELECT participant, cursor_seq FROM member WHERE conversation_id = ? ORDER BY joined_at, participant";
+
     private static final String DELETE_MEMBER = "DELETE FROM member WHERE conversation_id = ? AND participant = ?";
 
     private static final String INSERT_MESSAGE = """
@@ -209,6 +212,16 @@ public class ConversationStore {
                 .bind(0, participant)
                 .map((rs, ctx) -> conversation(rs))
                 .list());
+    }
+
+    /** Each member's cursor in the conversation, in joining order. */
+    public Map<String, Long> readSeqs(String conversationId) {
+        Map<String, Long> seqs = new LinkedHashMap<>();
+        jdbi.useHandle(h -> h.createQuery(SELECT_READ_SEQ)
+                .bind(0, conversationId)
+                .map((rs, ctx) -> Map.entry(rs.getString(1), rs.getLong(2)))
+                .forEach(e -> seqs.put(e.getKey(), e.getValue())));
+        return seqs;
     }
 
     /** Appends a message; returns it with its assigned {@code seq} and {@code createdAt}. */
