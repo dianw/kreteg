@@ -76,8 +76,10 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      # Only the binaries; ui-dist is an intermediate artifact of the build legs
       - uses: actions/download-artifact@v4
         with:
+          pattern: kreteg-*
           path: dist
           merge-multiple: true
       - name: Add client files and checksums
