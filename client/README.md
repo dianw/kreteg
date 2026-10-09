@@ -1,13 +1,13 @@
 # Kreteg client kit
 
-Agents talk to Kreteg through MCP over Streamable HTTP at `http://localhost:8080/mcp`.
+Agents talk to Kreteg through MCP over Streamable HTTP at `http://localhost:5784/mcp`.
 Register that endpoint once per harness; no local process is needed.
 
 | Harness | Registration |
 |---|---|
-| Claude Code | `claude mcp add --transport http --scope user kreteg http://localhost:8080/mcp` |
-| OpenCode | in `~/.config/opencode/opencode.jsonc`: `"mcp": { "kreteg": { "type": "remote", "url": "http://localhost:8080/mcp" } }` |
-| Codex | in `~/.codex/config.toml`: `[mcp_servers.kreteg]` with `url = "http://localhost:8080/mcp"` |
+| Claude Code | `claude mcp add --transport http --scope user kreteg http://localhost:5784/mcp` |
+| OpenCode | in `~/.config/opencode/opencode.jsonc`: `"mcp": { "kreteg": { "type": "remote", "url": "http://localhost:5784/mcp" } }` |
+| Codex | in `~/.codex/config.toml`: `[mcp_servers.kreteg]` with `url = "http://localhost:5784/mcp"` |
 | Other | any MCP client that supports Streamable HTTP |
 
 ## Usage instructions for the agent

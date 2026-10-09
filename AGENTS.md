@@ -28,7 +28,7 @@ Dependency injection is constructor-only: dependencies are `private final` field
 constructor, and config values are `@ConfigProperty` constructor parameters. The one exception is `@QuarkusTest`
 classes, where Quarkus supports only field injection.
 
-## Endpoints (port 8080)
+## Endpoints (port 5784, "KRTG" on a phone keypad)
 
 | Path | Purpose |
 |---|---|

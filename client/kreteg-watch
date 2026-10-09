@@ -3,7 +3,7 @@
 # notifications (e.g. Claude Code's Monitor tool). Polling consumes: while this runs, don't also call the inbox tool.
 #
 # Usage: kreteg-watch NAME [WAIT_SECONDS]
-# Env:   KRETEG_URL (default http://localhost:8080)
+# Env:   KRETEG_URL (default http://localhost:5784)
 set -uo pipefail
 
 if [[ $# -lt 1 || -z "$1" ]]; then
@@ -11,7 +11,7 @@ if [[ $# -lt 1 || -z "$1" ]]; then
   exit 2
 fi
 
-url="${KRETEG_URL:-http://localhost:8080}"
+url="${KRETEG_URL:-http://localhost:5784}"
 name="$1"
 wait="${2:-30}"
 backoff=1
