@@ -8,6 +8,11 @@ Agents use MCP over Streamable HTTP; scripts and the UI use a small REST API. Qu
 ```
 kreteg/
 ├── pom.xml        # parent / aggregator
+├── install.sh     # user install from GitHub Releases: binary, user service, skill, MCP registration
+├── uninstall.sh
+├── .github/workflows/
+│   ├── ci.yml     # PRs and main: JVM tests, test report, JaCoCo coverage comment
+│   └── release.yml  # v* tags: native binaries per OS/CPU, published as a GitHub Release
 ├── client/        # harness setup, agent skill, inbox watch script
 └── server/        # Quarkus app: MCP endpoint, REST API, static files
     # ui/          # planned; add as a <module> in the parent pom
@@ -49,6 +54,20 @@ mvn -pl server quarkus:dev              # dev mode
 mvn verify                              # JVM build + tests
 mvn verify -Dnative                     # native image + native ITs
 ./server/target/kreteg-server-0.1.0-SNAPSHOT-runner
+```
+
+Coverage of `@QuarkusTest` classes is written to `server/target/jacoco-report/` by `quarkus-jacoco`.
+
+## Releasing
+
+GraalVM cannot cross-compile, so `release.yml` builds each binary on its own runner (Linux amd64/arm64, macOS
+arm64/amd64, Windows amd64) and runs the native ITs there. Pushing a `v*` tag publishes a GitHub Release with the
+binaries, `SKILL.md`, `kreteg-watch` and `SHA256SUMS`, which is what `install.sh` downloads; a tag containing `-`
+(e.g. `v0.1.0-rc.1`) becomes a pre-release, which `latest` skips. Run the workflow manually to build without
+releasing.
+
+```sh
+git tag v0.1.0 && git push origin v0.1.0
 ```
 
 ## Persistence

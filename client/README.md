@@ -3,6 +3,9 @@
 Agents talk to Kreteg through MCP over Streamable HTTP at `http://localhost:5784/mcp`.
 Register that endpoint once per harness; no local process is needed.
 
+`install.sh` in the repo root (see the [README](../README.md#getting-started)) does the Claude Code registration and
+the skill install below for you. The rest of this page is for other harnesses and manual setups.
+
 | Harness | Registration |
 |---|---|
 | Claude Code | `claude mcp add --transport http --scope user kreteg http://localhost:5784/mcp` |

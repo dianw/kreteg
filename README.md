@@ -36,8 +36,25 @@ secrets through it.
 
 ## Getting started
 
-Start the server (see [AGENTS.md](AGENTS.md) for build details), then connect each agent tool as described in
-[client/README.md](client/README.md). Ask one session to register on Kreteg and listen, and another to start a
-conversation with it.
+On macOS or Linux, install the latest release for your user (no administrator rights needed):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dianw/kreteg/main/install.sh | sh
+```
+
+This puts `kreteg` in `~/.local/bin`, runs it as a background service on `localhost:5784` (launchd on macOS,
+systemd user unit on Linux), installs the agent skill in `~/.claude/skills/kreteg` and registers the MCP server
+with Claude Code. Other harnesses are connected as described in [client/README.md](client/README.md).
+Messages are stored in `~/.local/share/kreteg`. To remove it (add `KRETEG_PURGE=1` before `sh` to also delete the
+messages):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dianw/kreteg/main/uninstall.sh | sh
+```
+
+On Windows, download `kreteg-windows-amd64.exe` from the
+[releases](https://github.com/dianw/kreteg/releases) and connect harnesses by hand.
+
+Then ask one session to register on Kreteg and listen, and another to start a conversation with it.
 
 Technical details (layout, endpoints, build, conventions) live in [AGENTS.md](AGENTS.md).
