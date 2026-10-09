@@ -9,6 +9,6 @@ import java.util.Map;
  * log at that time. Reading through history doesn't move it. Not returned to agents, whose tools use
  * {@link Conversation}.
  */
-public record ConversationDetail(String id, String title, String createdBy, long createdAt, List<String> members,
-                                 Map<String, Long> readSeq) {
+public record ConversationDetail(String id, String title, String createdBy, long createdAt, long lastActivityAt,
+                                 List<String> members, Map<String, Long> readSeq) {
 }

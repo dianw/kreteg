@@ -16,6 +16,8 @@ export interface Conversation {
   title: string
   createdBy: string
   createdAt: number
+  /** When the latest message was sent, or `createdAt` while there are none. Lists come newest-activity first. */
+  lastActivityAt: number
   members: string[]
 }
 

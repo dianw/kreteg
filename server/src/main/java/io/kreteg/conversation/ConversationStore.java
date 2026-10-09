@@ -80,16 +80,18 @@ public class ConversationStore {
 
     private static final String SELECT_CONVERSATIONS = """
             SELECT c.id, c.title, c.created_by, c.created_at,
-                   (SELECT group_concat(participant, ',') FROM member WHERE conversation_id = c.id) AS members
+                   (SELECT group_concat(participant, ',') FROM member WHERE conversation_id = c.id) AS members,
+                   coalesce((SELECT created_at FROM message WHERE conversation_id = c.id ORDER BY seq DESC LIMIT 1),
+                            c.created_at) AS last_activity_at
             FROM conversation c
             """;
 
     private static final String SELECT_CONVERSATION_BY_ID = SELECT_CONVERSATIONS + " WHERE c.id = ?";
 
     private static final String SELECT_CONVERSATIONS_OF_MEMBER = SELECT_CONVERSATIONS
-            + " JOIN member mb ON mb.conversation_id = c.id WHERE mb.participant = ? ORDER BY c.created_at";
+            + " JOIN member mb ON mb.conversation_id = c.id WHERE mb.participant = ? ORDER BY last_activity_at DESC";
 
-    private static final String SELECT_ALL_CONVERSATIONS = SELECT_CONVERSATIONS + " ORDER BY c.created_at DESC";
+    private static final String SELECT_ALL_CONVERSATIONS = SELECT_CONVERSATIONS + " ORDER BY last_activity_at DESC";
 
     /** A new member starts at the end of the log; earlier messages stay reachable through history. */
     private static final String INSERT_MEMBER = """
@@ -304,7 +306,7 @@ public class ConversationStore {
     }
 
     private static Conversation conversation(ResultSet rs) throws SQLException {
-        return new Conversation(rs.getString(1), rs.getString(2), rs.getString(3), rs.getLong(4),
+        return new Conversation(rs.getString(1), rs.getString(2), rs.getString(3), rs.getLong(4), rs.getLong(6),
                 names(rs.getString(5)));
     }
 

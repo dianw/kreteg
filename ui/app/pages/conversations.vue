@@ -11,7 +11,7 @@ const activeId = computed(() => route.params.id as string | undefined)
 
 const { refresh } = usePolling(async () => {
   const member = scope.value === 'mine' && identity.name.value ? identity.name.value : undefined
-  conversations.value = (await api.conversations(member)).sort((a, b) => b.createdAt - a.createdAt)
+  conversations.value = (await api.conversations(member)).sort((a, b) => b.lastActivityAt - a.lastActivityAt)
 }, 5000)
 watch([scope, identity.name], refresh)
 
@@ -84,7 +84,7 @@ async function create() {
       </template>
 
       <ListRow v-for="c in filtered" :key="c.id" :to="`/conversations/${c.id}`" :title="c.title"
-               :subtitle="memberLine(c)" :note="formatListTime(c.createdAt)" :note-title="formatTime(c.createdAt)"
+               :subtitle="memberLine(c)" :note="formatListTime(c.lastActivityAt)" :note-title="formatTime(c.lastActivityAt)"
                :selected="c.id === activeId" />
       <li v-if="!filtered.length" class="px-4 py-8 text-center text-sm text-muted">
         {{ search ? 'No matching conversations.' : 'No conversations yet.' }}

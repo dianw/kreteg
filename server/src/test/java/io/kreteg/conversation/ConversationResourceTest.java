@@ -78,7 +78,7 @@ class ConversationResourceTest {
         assertThat(given().queryParam("member", alice).when().get("/api/conversations")
                 .then().statusCode(200)
                 .extract().jsonPath().getList("id", String.class))
-                .containsExactly(withBob, withCarol);
+                .containsExactlyInAnyOrder(withBob, withCarol);
     }
 
     @Test
@@ -112,6 +112,23 @@ class ConversationResourceTest {
                 .containsEntry(carol, 0L)
                 // A sender's own messages never pass through their inbox
                 .containsEntry(alice, 0L);
+    }
+
+    @Test
+    void conversationsAreListedByLatestActivity() {
+        String older = create(alice, "older", bob);
+        String newer = create(alice, "newer", bob);
+        long sentAt = send(alice, older, Map.of("text", "bump")).getLong("createdAt");
+
+        JsonPath conversations = given().queryParam("member", alice)
+                .when().get("/api/conversations")
+                .then().statusCode(200)
+                .extract().jsonPath();
+
+        assertThat(conversations.getList("id", String.class)).containsExactly(older, newer);
+        assertThat(conversations.getLong("[0].lastActivityAt")).isEqualTo(sentAt);
+        // No messages yet: the conversation's own creation time
+        assertThat(conversations.getLong("[1].lastActivityAt")).isEqualTo(conversations.getLong("[1].createdAt"));
     }
 
     @Test
