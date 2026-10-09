@@ -8,8 +8,28 @@ on:
   workflow_dispatch:
 
 jobs:
+  # The UI is static HTML/JS/CSS, the same on every OS, so it is built once here and reused by every build leg.
+  # This also keeps nuxt generate off Windows, where Nuxt 4.6 / Nitro 2.13 mangle paths (/D:/a/...) and fail.
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: graalvm-community
+          cache: maven
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: mvn -B -pl ui package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-dist
+          path: ui/.output/public
+          if-no-files-found: error
+
   build:
     name: ${{ matrix.asset }}
+    needs: ui
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -32,8 +52,13 @@ jobs:
           distribution: graalvm-community
           cache: maven
           github-token: ${{ secrets.GITHUB_TOKEN }}
-      # Builds the native image and runs the native ITs against it, so a binary that doesn't start fails here
-      - run: mvn -B verify -Dnative
+      - uses: actions/download-artifact@v4
+        with:
+          name: ui-dist
+          path: ui/.output/public
+      # Builds the native image and runs the native ITs against it, so a binary that doesn't start fails here.
+      # The skip flags package the downloaded UI as-is instead of installing Node and rebuilding it.
+      - run: mvn -B verify -Dnative -Dskip.npm -Dskip.installnodenpm
       - run: |
           mkdir dist
           cp server/target/*-runner* "dist/${{ matrix.asset }}"

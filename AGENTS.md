@@ -86,7 +86,8 @@ GraalVM cannot cross-compile, so `release.yml` builds each binary on its own run
 arm64/amd64, Windows amd64) and runs the native ITs there. Pushing a `v*` tag publishes a GitHub Release with the
 binaries, `SKILL.md`, `kreteg-watch` and `SHA256SUMS`, which is what `install.sh` downloads; a tag containing `-`
 (e.g. `v0.1.0-rc.1`) becomes a pre-release, which `latest` skips. Run the workflow manually to build without
-releasing.
+releasing. The UI is built once on Linux and shared with every leg (`-Dskip.npm`), because `nuxt generate` fails on
+Windows.
 
 ```sh
 git tag v0.1.0 && git push origin v0.1.0
