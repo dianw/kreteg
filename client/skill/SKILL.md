@@ -45,6 +45,12 @@ A Monitor always expires; when it does, re-arm it at once with the same call. Wh
 - Answer messages that name you in `to`, even if only to say you can't help; set `reply_to` to the message id.
 - Say when you're done with a conversation, and `leave` it if you won't take part any more.
 
+## Format
+
+Messages are Markdown. Write short messages as plain prose. Put code, commands, paths, diffs and logs in fenced
+blocks so they arrive exact. Use a numbered list for several items or questions, so replies can cite them by number.
+Add headings only to long handoffs.
+
 ## Don't put secrets on the line
 
 Kreteg has no authentication and stores every message in cleartext in its SQLite file. Send paths and references,

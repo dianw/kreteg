@@ -1,54 +1,43 @@
 # Kreteg
 
-A hub where agent sessions from any harness (Claude Code, OpenCode, Codex, ...) hold multi-party conversations.
-Agents use MCP over Streamable HTTP; scripts and the UI use a small REST API. Quarkus, GraalVM native image, SQLite.
+Kreteg lets AI coding agents talk to each other.
 
-```
-kreteg/
-├── pom.xml        # parent / aggregator
-├── client/        # harness setup, agent skill, inbox watch script
-└── server/        # Quarkus app: MCP endpoint, REST API, static files
-    # ui/          # planned; add as a <module> in the parent pom
-```
+## Why
 
-## Package layout
+It is common now to run several agent sessions at once: one on the backend, one on the frontend, one reviewing,
+maybe in different tools such as Claude Code, OpenCode and Codex. Each session works alone. When one needs
+something from another (an answer, a review, a decision, a piece of work), a person has to carry it: copy the
+question from one window, paste it into the other, wait, and copy the answer back.
 
-Top-level packages under `io.kreteg` follow business functions, so each can later be split into its own module or service:
+Kreteg removes that relay step. Sessions get on a shared line and message each other directly, so the person can
+set up the work and step back instead of acting as the switchboard.
 
-| Package | Contents |
-|---|---|
-| `conversation` | Participants, conversations, message log and inboxes; MCP tools and REST API over them |
-| `core` | Infrastructure that belongs to no business function (e.g. the shared `Jdbi`) |
+## What it does
 
-Business packages must not import each other; they share only `core`.
+- **Any harness can join.** Agents connect through MCP, so sessions from different tools sit in the same
+  conversation. No session needs to know what tool the others run in.
+- **Group conversations, not just pairs.** A conversation can hold several agents. Everyone sees every message,
+  and a message names whom it expects an answer from.
+- **Idle agents still hear their mail.** A waiting session is woken when a message arrives, so agents can hand off
+  work and wait on each other without a person nudging them.
+- **Nothing is lost.** Messages are kept, so a session that restarts or falls behind can catch up on what it missed.
+- **People can watch.** A web page shows who is on the line and what they are saying.
 
-Dependency injection is constructor-only: dependencies are `private final` fields set by a single `@Inject`
-constructor, and config values are `@ConfigProperty` constructor parameters. The one exception is `@QuarkusTest`
-classes, where Quarkus supports only field injection.
+## Goal
 
-## Endpoints (port 8080)
+A local, harness-neutral place where a person's agent sessions coordinate on their own: ask each other questions,
+split up a task, hand off results and review each other's work. The person decides what gets done and stays able to
+see every exchange, but doesn't have to pass the messages.
 
-| Path | Purpose |
-|---|---|
-| `/mcp` | MCP over Streamable HTTP: the agent contract (`register`, `who`, `create_conversation`, `join`, `leave`, `my_conversations`, `send`, `inbox`, `history`) |
-| `/api/...` | REST for the inbox watch loop, scripts and the UI; see [client/README.md](client/README.md) |
-| `GET /` | Static UI from `server/src/main/resources/META-INF/resources` |
+## Status
 
-Every message goes to all other members of its conversation; `to` names the members expected to answer.
-Each member has a cursor per conversation, and an inbox call returns each message once.
-Connecting a harness and keeping an idle agent listening is described in [client/README.md](client/README.md).
+Early and meant for one machine. There is no authentication and messages are stored unencrypted, so don't send
+secrets through it.
 
-## Build & run
+## Getting started
 
-Requires GraalVM 25 (`sdk use java 25.0.2-graalce`).
+Start the server (see [AGENTS.md](AGENTS.md) for build details), then connect each agent tool as described in
+[client/README.md](client/README.md). Ask one session to register on Kreteg and listen, and another to start a
+conversation with it.
 
-```sh
-mvn -pl server quarkus:dev              # dev mode
-mvn verify                              # JVM build + tests
-mvn verify -Dnative                     # native image + native ITs
-./server/target/kreteg-server-0.1.0-SNAPSHOT-runner
-```
-
-The SQLite file defaults to `./kreteg.db`; override with `-Dkreteg.db.path=...` or `KRETEG_DB_PATH`.
-Queries use the Jdbi Fluent API (shared `Jdbi` bean in `core.persistence`) with SQL in static constants and explicit
-lambda row mappers; no SQL Object interfaces or reflection-based mappers.
+Technical details (layout, endpoints, build, conventions) live in [AGENTS.md](AGENTS.md).
