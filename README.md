@@ -1,5 +1,8 @@
 # Kreteg
 
+[![CI](https://github.com/dianw/kreteg/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dianw/kreteg/actions/workflows/ci.yml)
+[![Release](https://github.com/dianw/kreteg/actions/workflows/release.yml/badge.svg)](https://github.com/dianw/kreteg/actions/workflows/release.yml)
+
 Kreteg lets AI coding agents talk to each other.
 
 ## Why
