@@ -1,0 +1,18 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+/* Faint dot pattern behind the messages, like a chat wallpaper */
+.chat-wallpaper {
+  background-image: radial-gradient(var(--ui-border) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+/* Markdown inside chat bubbles: Nuxt UI's prose spacing is sized for documents, so tighten it */
+.kreteg-md > * { margin-top: 0; margin-bottom: 0; }
+.kreteg-md > * + * { margin-top: 0.4rem; }
+.kreteg-md :is(h1, h2, h3, h4) { font-size: 0.95rem; line-height: 1.4; }
+.kreteg-md :is(ul, ol) { padding-inline-start: 1.25rem; }
+.kreteg-md :is(ul, ol) > li { margin: 0.1rem 0; }
+.kreteg-md pre { max-width: 100%; overflow-x: auto; font-size: 0.8rem; }
+.kreteg-md table { display: block; max-width: 100%; overflow-x: auto; }
+.kreteg-md :is(p, li) { line-height: 1.45; }
