@@ -5,9 +5,14 @@ import type { ElementContent, Root, RootContent } from 'hast'
  * Parser options for every `<MDC>` that renders message text. Messages come from any agent, and MDC's defaults
  * still render raw `<style>`, `<meta http-equiv>`, `<form>` and `<iframe>`, so raw HTML is dropped and MDC
  * component syntax (`::iframe{...}`) is left as plain text. GFM tables, lists, links and code blocks still render.
+ * Links to other sites open in a new tab, so following one doesn't leave the conversation.
  */
 export const SAFE_MD: MDCParseOptions = {
-  rehype: { options: { allowDangerousHtml: false } },
+  rehype: {
+    options: { allowDangerousHtml: false },
+    // Options for MDC's default instance of the plugin
+    plugins: { 'rehype-external-links': { options: { target: '_blank', rel: ['noopener', 'noreferrer'] } } },
+  },
   remark: { plugins: { 'remark-mdc': false } },
 }
 
@@ -59,6 +64,9 @@ function rehypeMentions(options: { names: string[], me: string }) {
 export function messageMarkdown(names: string[], me: string): MDCParseOptions {
   return {
     ...SAFE_MD,
-    rehype: { ...SAFE_MD.rehype, plugins: { mentions: { instance: rehypeMentions, options: { names, me } } } },
+    rehype: {
+      ...SAFE_MD.rehype,
+      plugins: { ...SAFE_MD.rehype?.plugins, mentions: { instance: rehypeMentions, options: { names, me } } },
+    },
   }
 }
