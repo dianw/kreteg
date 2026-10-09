@@ -101,6 +101,14 @@ public class ConversationService {
         return store.listConversationsOf(member);
     }
 
+    /** The conversation with each member's read position. */
+    public ConversationDetail conversation(String conversationId) {
+        Conversation conversation = requireConversation(conversationId);
+        return new ConversationDetail(conversation.id(), conversation.title(), conversation.createdBy(),
+                conversation.createdAt(), conversation.lastActivityAt(), conversation.members(),
+                store.readSeqs(conversationId));
+    }
+
     public Message send(String me, String conversationId, String text, List<String> to, String replyTo) {
         requireRegistered(me);
         Conversation conversation = requireConversation(conversationId);

@@ -80,16 +80,18 @@ public class ConversationStore {
 
     private static final String SELECT_CONVERSATIONS = """
             SELECT c.id, c.title, c.created_by, c.created_at,
-                   (SELECT group_concat(participant, ',') FROM member WHERE conversation_id = c.id) AS members
+                   (SELECT group_concat(participant, ',') FROM member WHERE conversation_id = c.id) AS members,
+                   coalesce((SELECT created_at FROM message WHERE conversation_id = c.id ORDER BY seq DESC LIMIT 1),
+                            c.created_at) AS last_activity_at
             FROM conversation c
             """;
 
     private static final String SELECT_CONVERSATION_BY_ID = SELECT_CONVERSATIONS + " WHERE c.id = ?";
 
     private static final String SELECT_CONVERSATIONS_OF_MEMBER = SELECT_CONVERSATIONS
-            + " JOIN member mb ON mb.conversation_id = c.id WHERE mb.participant = ? ORDER BY c.created_at";
+            + " JOIN member mb ON mb.conversation_id = c.id WHERE mb.participant = ? ORDER BY last_activity_at DESC";
 
-    private static final String SELECT_ALL_CONVERSATIONS = SELECT_CONVERSATIONS + " ORDER BY c.created_at DESC";
+    private static final String SELECT_ALL_CONVERSATIONS = SELECT_CONVERSATIONS + " ORDER BY last_activity_at DESC";
 
     /** A new member starts at the end of the log; earlier messages stay reachable through history. */
     private static final String INSERT_MEMBER = """
@@ -97,6 +99,9 @@ public class ConversationStore {
             VALUES (?, ?, (SELECT coalesce(max(seq), 0) FROM message WHERE conversation_id = ?))
             ON CONFLICT (conversation_id, participant) DO NOTHING
             """;
+
+    private static final String SELECT_READ_SEQ =
+            "SELECT participant, cursor_seq FROM member WHERE conversation_id = ? ORDER BY joined_at, participant";
 
     private static final String DELETE_MEMBER = "DELETE FROM member WHERE conversation_id = ? AND participant = ?";
 
@@ -211,6 +216,16 @@ public class ConversationStore {
                 .list());
     }
 
+    /** Each member's cursor in the conversation, in joining order. */
+    public Map<String, Long> readSeqs(String conversationId) {
+        Map<String, Long> seqs = new LinkedHashMap<>();
+        jdbi.useHandle(h -> h.createQuery(SELECT_READ_SEQ)
+                .bind(0, conversationId)
+                .map((rs, ctx) -> Map.entry(rs.getString(1), rs.getLong(2)))
+                .forEach(e -> seqs.put(e.getKey(), e.getValue())));
+        return seqs;
+    }
+
     /** Appends a message; returns it with its assigned {@code seq} and {@code createdAt}. */
     public Message insertMessage(String id, Conversation conversation, String sender, List<String> to,
                                  String replyTo, String text) {
@@ -291,7 +306,7 @@ public class ConversationStore {
     }
 
     private static Conversation conversation(ResultSet rs) throws SQLException {
-        return new Conversation(rs.getString(1), rs.getString(2), rs.getString(3), rs.getLong(4),
+        return new Conversation(rs.getString(1), rs.getString(2), rs.getString(3), rs.getLong(4), rs.getLong(6),
                 names(rs.getString(5)));
     }
 

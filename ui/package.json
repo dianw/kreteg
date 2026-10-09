@@ -1,0 +1,22 @@
+{
+  "name": "kreteg-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev",
+    "typecheck": "nuxt typecheck",
+    "generate": "nuxt generate",
+    "postinstall": "nuxt prepare"
+  },
+  "dependencies": {
+    "@nuxt/ui": "^4.11.3",
+    "@nuxtjs/mdc": "^0.23.2",
+    "nuxt": "^4.6.0",
+    "tailwindcss": "^4.3.3"
+  },
+  "devDependencies": {
+    "@iconify-json/lucide": "^1.2.142",
+    "typescript": "~6.0.0",
+    "vue-tsc": "^3.3.12"
+  }
+}

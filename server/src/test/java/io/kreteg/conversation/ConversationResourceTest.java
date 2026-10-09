@@ -78,7 +78,7 @@ class ConversationResourceTest {
         assertThat(given().queryParam("member", alice).when().get("/api/conversations")
                 .then().statusCode(200)
                 .extract().jsonPath().getList("id", String.class))
-                .containsExactly(withBob, withCarol);
+                .containsExactlyInAnyOrder(withBob, withCarol);
     }
 
     @Test
@@ -92,6 +92,49 @@ class ConversationResourceTest {
         send(alice, conversation, Map.of("text", "after"));
 
         assertThat(inbox(carol, 0).getList("text", String.class)).containsExactly("after");
+    }
+
+    @Test
+    void conversationShowsHowFarEachMemberHasRead() {
+        String conversation = create(alice, "receipts", bob, carol);
+        long seq = send(alice, conversation, Map.of("text", "anyone?")).getLong("seq");
+
+        inbox(bob, 0);
+        JsonPath detail = given().when().get("/api/conversations/{id}", conversation)
+                .then().statusCode(200)
+                .extract().jsonPath();
+
+        assertThat(detail.getString("title")).isEqualTo("receipts");
+        assertThat(detail.getList("members", String.class)).containsExactlyInAnyOrder(alice, bob, carol);
+        assertThat(detail.getMap("readSeq", String.class, Long.class))
+                .containsOnlyKeys(alice, bob, carol)
+                .containsEntry(bob, seq)
+                .containsEntry(carol, 0L)
+                // A sender's own messages never pass through their inbox
+                .containsEntry(alice, 0L);
+    }
+
+    @Test
+    void conversationsAreListedByLatestActivity() {
+        String older = create(alice, "older", bob);
+        String newer = create(alice, "newer", bob);
+        long sentAt = send(alice, older, Map.of("text", "bump")).getLong("createdAt");
+
+        JsonPath conversations = given().queryParam("member", alice)
+                .when().get("/api/conversations")
+                .then().statusCode(200)
+                .extract().jsonPath();
+
+        assertThat(conversations.getList("id", String.class)).containsExactly(older, newer);
+        assertThat(conversations.getLong("[0].lastActivityAt")).isEqualTo(sentAt);
+        // No messages yet: the conversation's own creation time
+        assertThat(conversations.getLong("[1].lastActivityAt")).isEqualTo(conversations.getLong("[1].createdAt"));
+    }
+
+    @Test
+    void unknownConversationIsNotFound() {
+        given().when().get("/api/conversations/{id}", "c-missing")
+                .then().statusCode(404);
     }
 
     @Test
