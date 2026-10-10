@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import type { ConversationDetail, Message, Participant } from '~/types/kreteg'
 
-const PAGE = 100
-
 const route = useRoute()
 const id = route.params.id as string
 const api = useKretegApi()
@@ -42,11 +40,32 @@ function scrollToBottom() {
   scroller.value?.scrollTo({ top: scroller.value.scrollHeight })
 }
 
+/**
+ * The message the view is held on while older pages load above it, and its distance from the top of the scroller.
+ * Bubbles grow after they are added (Markdown is parsed asynchronously), and Safari has no CSS scroll anchoring, so
+ * the view is held by hand.
+ */
+let anchor: { id: string, top: number } | null = null
+
+function offsetOf(messageId: string) {
+  const el = document.querySelector(`[data-message-id="${messageId}"]`)
+  const box = scroller.value
+  return el && box ? el.getBoundingClientRect().top - box.getBoundingClientRect().top : null
+}
+
+function holdAnchor() {
+  if (!anchor || !scroller.value) return
+  const top = offsetOf(anchor.id)
+  if (top !== null) scroller.value.scrollTop += top - anchor.top
+}
+
 // Whether the view follows the newest message: true while the reader is at the bottom. Bubbles keep growing after
-// they are added (Markdown is parsed asynchronously), so the view is moved down whenever the thread changes size.
+// they are added, so the view is moved down whenever the thread changes size.
 let pinned = true
 function onScroll() {
   pinned = nearBottom()
+  if (anchor) anchor.top = offsetOf(anchor.id) ?? anchor.top
+  maybeLoadOlder()
 }
 
 const thread = useTemplateRef<HTMLElement>('thread')
@@ -56,13 +75,54 @@ watch(thread, (el) => {
   if (!el) return
   resizes = new ResizeObserver(() => {
     if (pinned) scrollToBottom()
+    else holdAnchor()
   })
   resizes.observe(el)
 })
 onBeforeUnmount(() => resizes?.disconnect())
 
+// A conversation opens on its latest page; older pages load as the reader scrolls up
+const PAGE = 50
+const LATEST = Number.MAX_SAFE_INTEGER
+const loaded = ref(false)
+const hasOlder = ref(false)
+const loadingOlder = ref(false)
+
+async function loadOlder() {
+  const first = messages.value[0]
+  if (!first || !hasOlder.value || loadingOlder.value) return
+  loadingOlder.value = true
+  try {
+    const page = await api.historyBefore(id, first.seq, PAGE)
+    hasOlder.value = page.length === PAGE
+    anchor = { id: first.id, top: offsetOf(first.id) ?? 0 }
+    messages.value.unshift(...page)
+    await nextTick()
+    if (pinned) scrollToBottom()
+    else holdAnchor()
+  } finally {
+    loadingOlder.value = false
+  }
+}
+
+/** Loads the page above when the reader is near the top, or when the thread doesn't fill the view yet. */
+function maybeLoadOlder() {
+  const el = scroller.value
+  if (el && el.scrollTop < 300 && hasOlder.value && !loadingOlder.value) loadOlder().then(() => nextTick(maybeLoadOlder)).catch(() => {})
+}
+
 // History, not inbox: reading must not consume anyone's messages
 const history = usePolling(async () => {
+  if (!loaded.value) {
+    const page = await api.historyBefore(id, LATEST, PAGE)
+    messages.value = page
+    hasOlder.value = page.length === PAGE
+    loaded.value = true
+    await nextTick()
+    scrollToBottom()
+    maybeLoadOlder()
+    return
+  }
   let page: Message[]
   do {
     const since = messages.value.at(-1)?.seq ?? 0
@@ -300,7 +360,10 @@ async function join() {
   }
 }
 
-function jumpTo(messageId: string) {
+/** Scrolls to a message, loading older pages first when it is above the ones loaded. */
+async function jumpTo(messageId: string) {
+  while (!byId.value.has(messageId) && hasOlder.value) await loadOlder()
+  await nextTick()
   document.querySelector(`[data-message-id="${messageId}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
 
@@ -324,9 +387,15 @@ function firstLine(message: Message) {
                 :subtitle-title="conversation ? `Started by ${conversation.createdBy}, ${formatTime(conversation.createdAt)}` : ''"
                 :ui="{ subtitle: workingLine ? 'text-primary' : '' }" />
 
-    <div ref="scroller" class="flex-1 overflow-y-auto bg-muted chat-wallpaper" @scroll.passive="onScroll">
+    <div ref="scroller" class="flex-1 overflow-y-auto [overflow-anchor:none] bg-muted chat-wallpaper"
+         @scroll.passive="onScroll">
       <div ref="thread" class="max-w-4xl mx-auto px-2 md:px-6 py-4">
-        <p v-if="!messages.length" class="text-center text-sm text-muted py-8">No messages yet.</p>
+        <p v-if="loaded && !messages.length" class="text-center text-sm text-muted py-8">No messages yet.</p>
+        <!-- Always the same height while there is more to load, so the spinner showing doesn't move the messages -->
+        <p v-else-if="hasOlder" class="h-8 flex items-center justify-center">
+          <UIcon name="i-lucide-loader-circle" class="size-4 text-muted animate-spin"
+                 :class="loadingOlder ? '' : 'invisible'" :aria-hidden="!loadingOlder" aria-label="Loading earlier messages" />
+        </p>
 
         <UChatMessages :should-scroll-to-bottom="false" compact
                        :ui="{ root: 'gap-0 px-0', viewport: 'sticky bottom-4 inset-x-0 h-0 z-10', autoScroll: 'bottom-0 shadow' }">
