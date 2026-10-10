@@ -121,14 +121,25 @@ public class ConversationStore {
     private static final String SELECT_HISTORY = SELECT_MESSAGES
             + " WHERE m.conversation_id = ? AND m.seq > ? ORDER BY m.seq LIMIT ?";
 
+    /** Messages addressed to the participant, or to nobody in particular (an empty {@code to}). */
     private static final String SELECT_INBOX = SELECT_MESSAGES + """
              JOIN member mb ON mb.conversation_id = m.conversation_id AND m.seq > mb.cursor_seq
             WHERE mb.participant = ? AND m.sender <> ?
+              AND (m.recipients IS NULL OR instr(',' || m.recipients || ',', ',' || ? || ',') > 0)
             ORDER BY m.seq LIMIT ?
             """;
 
-    private static final String ADVANCE_CURSOR =
-            "UPDATE member SET cursor_seq = ? WHERE conversation_id = ? AND participant = ? AND cursor_seq < ?";
+    /**
+     * Moves each of the participant's cursors to the last message at or below {@code seq} in that conversation, so
+     * messages addressed to others that the inbox scan passed over are not scanned again.
+     */
+    private static final String ADVANCE_CURSORS = """
+            UPDATE member SET cursor_seq = (
+                SELECT max(m.seq) FROM message m WHERE m.conversation_id = member.conversation_id AND m.seq <= ?)
+            WHERE participant = ? AND cursor_seq < (
+                SELECT coalesce(max(m.seq), 0) FROM message m
+                WHERE m.conversation_id = member.conversation_id AND m.seq <= ?)
+            """;
 
     private final Jdbi jdbi;
 
@@ -259,27 +270,26 @@ public class ConversationStore {
     }
 
     /**
-     * Returns the participant's undelivered messages from all their conversations, oldest first and excluding their
-     * own, and moves each membership cursor past what was returned.
+     * Returns the participant's undelivered messages from all their conversations, oldest first, excluding their own
+     * and those addressed only to others, and moves each membership cursor past everything the scan covered: up to
+     * the last returned message when {@code limit} cut the batch short, otherwise to the end of each conversation.
+     * Messages are inserted under the same write lock, so none can appear between the scan and the cursor update.
      */
     public List<Message> takeInbox(String participant, int limit) {
         return write(h -> {
             List<Message> messages = h.createQuery(SELECT_INBOX)
                     .bind(0, participant)
                     .bind(1, participant)
-                    .bind(2, limit)
+                    .bind(2, participant)
+                    .bind(3, limit)
                     .map((rs, ctx) -> message(rs))
                     .list();
-            Map<String, Long> lastSeqByConversation = new LinkedHashMap<>();
-            for (Message message : messages) {
-                lastSeqByConversation.merge(message.conversation(), message.seq(), Math::max);
-            }
-            lastSeqByConversation.forEach((conversationId, seq) -> h.createUpdate(ADVANCE_CURSOR)
-                    .bind(0, seq)
-                    .bind(1, conversationId)
-                    .bind(2, participant)
-                    .bind(3, seq)
-                    .execute());
+            long scannedTo = messages.size() < limit ? Long.MAX_VALUE : messages.getLast().seq();
+            h.createUpdate(ADVANCE_CURSORS)
+                    .bind(0, scannedTo)
+                    .bind(1, participant)
+                    .bind(2, scannedTo)
+                    .execute();
             return messages;
         });
     }
