@@ -16,6 +16,7 @@ const nav = [
                    active-color="primary" active-variant="soft" />
         </UTooltip>
         <div class="flex-1" />
+        <ThemeToggle />
         <IdentityControl />
       </nav>
       <main class="flex-1 min-w-0 h-full">
