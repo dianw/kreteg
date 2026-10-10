@@ -430,9 +430,10 @@ function firstLine(message: Message) {
                 </p>
 
                 <MDC :value="row.m.text" :cache-key="`${row.key}|${markdownKey}`" :parser-options="markdown" class="kreteg-md break-words" />
-                <!-- Copy and reply sit on the time line, shown on hover; negative margins keep the line's height -->
+                <!-- Copy and reply sit on the time line, shown on hover (always on touch screens, which have none); negative
+                     margins keep the line's height -->
                 <div class="flex items-center justify-end gap-1 text-[11px] leading-none text-muted">
-                  <div class="flex -my-1.5 opacity-0 group-hover/message:opacity-100 focus-within:opacity-100">
+                  <div class="flex -my-1.5 opacity-0 group-hover/message:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
                     <UButton :icon="copiedId === row.m.id ? 'i-lucide-check' : 'i-lucide-copy'" size="xs" color="neutral"
                              variant="ghost" class="p-1" :ui="{ leadingIcon: 'size-3.5' }"
                              :aria-label="copiedId === row.m.id ? 'Copied' : 'Copy Markdown'"
@@ -472,7 +473,7 @@ function firstLine(message: Message) {
       </div>
     </div>
 
-    <footer v-if="conversation" class="shrink-0 border-t border-default bg-elevated/40 px-3 py-2">
+    <footer v-if="conversation" class="shrink-0 border-t border-default bg-elevated/40 px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
       <div class="max-w-4xl mx-auto">
         <form v-if="!identity.name.value" class="flex flex-wrap items-center justify-center gap-2 py-1"
               @submit.prevent="join">
@@ -495,9 +496,10 @@ function firstLine(message: Message) {
             <span class="truncate" :class="nameColor(name)">{{ name }}</span>
           </li>
         </ul>
+        <!-- 16px text below md: iOS zooms the page into a smaller input when it gets focus -->
         <UChatPrompt ref="prompt" v-model="text" placeholder="Type a message, @ to mention (Markdown supported)"
                      variant="subtle" :maxrows="8" :submit-on-enter="!mentions.open.value"
-                     class="bg-default" @submit="send"
+                     :ui="{ base: 'text-base md:text-sm' }" class="bg-default" @submit="send"
                      @input="mentions.onInput" @keydown="mentions.onKeydown" @keyup="mentions.onCaretMove"
                      @click="mentions.onCaretMove" @blur="mentions.close">
           <template v-if="replyTo" #header>
