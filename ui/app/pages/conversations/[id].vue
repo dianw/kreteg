@@ -14,7 +14,7 @@ const isMember = computed(() => !!identity.name.value && !!conversation.value?.m
 const scroller = useTemplateRef<HTMLElement>('scroller')
 
 // Members and read positions change while the conversation is open, so they are polled as often as the messages
-usePolling(async () => {
+const { refresh: refreshConversation } = usePolling(async () => {
   conversation.value = await api.conversation(id)
   notFound.value = !conversation.value
 }, 2000)
@@ -391,7 +391,12 @@ function firstLine(message: Message) {
   <template v-else>
     <PaneHeader back="/conversations" :title="conversation?.title ?? '…'" :subtitle="workingLine || memberLine"
                 :subtitle-title="conversation ? `Started by ${conversation.createdBy}, ${formatTime(conversation.createdAt)}` : ''"
-                :ui="{ subtitle: workingLine ? 'text-primary' : '' }" />
+                :ui="{ subtitle: workingLine ? 'text-primary' : '' }">
+      <template v-if="conversation" #actions>
+        <MembersControl :conversation="conversation" :participants="participants" :can-add="isMember"
+                        @added="refreshConversation" />
+      </template>
+    </PaneHeader>
 
     <div ref="scroller" class="flex-1 overflow-y-auto [overflow-anchor:none] bg-muted chat-wallpaper"
          @scroll.passive="onScroll">
