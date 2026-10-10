@@ -172,6 +172,35 @@ function reply(message: Message) {
   nextTick(() => prompt.value?.textareaRef?.focus())
 }
 
+/**
+ * Double-clicking a bubble replies to it, as the reply button does. Links and buttons keep their own behaviour, and
+ * code keeps double-click as word selection, since ids, paths and commands are what readers copy from a message.
+ * Elsewhere the word the double-click selected is deselected so it doesn't look like a copy target.
+ */
+function onBubbleDblclick(event: MouseEvent, message: Message) {
+  if (!isMember.value) return
+  const target = event.target as Element | null
+  if (!target?.closest('[data-slot="content"]') || target.closest('a, button, pre, code')) return
+  window.getSelection()?.removeAllRanges()
+  reply(message)
+}
+
+// Copy puts the message's Markdown source, not the rendered text, on the clipboard
+const toast = useToast()
+const copiedId = ref<string | null>(null)
+let copiedTimer: ReturnType<typeof setTimeout> | undefined
+async function copy(message: Message) {
+  try {
+    await navigator.clipboard.writeText(message.text)
+    copiedId.value = message.id
+    clearTimeout(copiedTimer)
+    copiedTimer = setTimeout(() => (copiedId.value = null), 1500)
+  } catch (e) {
+    toast.add({ title: 'Could not copy', description: e instanceof Error ? e.message : String(e), color: 'error' })
+  }
+}
+onBeforeUnmount(() => clearTimeout(copiedTimer))
+
 async function send() {
   if (!text.value.trim()) return
   sending.value = true
@@ -242,14 +271,9 @@ function firstLine(message: Message) {
             </div>
 
             <UChatMessage v-bind="row.chat" :data-message-id="row.m.id" :side="row.mine ? 'right' : 'left'"
-                          variant="soft" compact :ui="bubbleUi(row)">
+                          variant="soft" compact :ui="bubbleUi(row)" @dblclick="onBubbleDblclick($event, row.m)">
               <template #content>
-                <UButton v-if="isMember" icon="i-lucide-reply" size="xs" color="neutral" variant="ghost"
-                         aria-label="Reply" @click="reply(row.m)"
-                         class="absolute top-0.5 right-0.5 opacity-0 group-hover/message:opacity-100 focus:opacity-100
-                                bg-inherit" />
-
-                <p v-if="!row.mine && row.firstOfGroup" class="text-xs font-semibold pr-6" :class="nameColor(row.m.from)">
+                <p v-if="!row.mine && row.firstOfGroup" class="text-xs font-semibold" :class="nameColor(row.m.from)">
                   {{ row.m.from }}
                 </p>
 
@@ -270,11 +294,21 @@ function firstLine(message: Message) {
                 </p>
 
                 <MDC :value="row.m.text" :cache-key="`${row.m.id}|${markdownKey}`" :parser-options="markdown" class="kreteg-md break-words" />
-                <p class="flex items-center justify-end gap-1 text-[11px] leading-none text-muted">
+                <!-- Copy and reply sit on the time line, shown on hover; negative margins keep the line's height -->
+                <div class="flex items-center justify-end gap-1 text-[11px] leading-none text-muted">
+                  <div class="flex -my-1.5 opacity-0 group-hover/message:opacity-100 focus-within:opacity-100">
+                    <UButton :icon="copiedId === row.m.id ? 'i-lucide-check' : 'i-lucide-copy'" size="xs" color="neutral"
+                             variant="ghost" class="p-1" :ui="{ leadingIcon: 'size-3.5' }"
+                             :aria-label="copiedId === row.m.id ? 'Copied' : 'Copy Markdown'"
+                             :title="copiedId === row.m.id ? 'Copied' : 'Copy Markdown'" @click="copy(row.m)" />
+                    <UButton v-if="isMember" icon="i-lucide-reply" size="xs" color="neutral" variant="ghost"
+                             class="p-1" :ui="{ leadingIcon: 'size-3.5' }"
+                             aria-label="Reply" title="Reply (or double-click the message)" @click="reply(row.m)" />
+                  </div>
                   <span :title="formatTime(row.m.createdAt)">{{ formatClock(row.m.createdAt) }}</span>
                   <UIcon v-if="row.receipt" :name="row.receipt.read ? 'i-lucide-check-check' : 'i-lucide-check'"
                          :class="['size-3.5', row.receipt.read ? 'text-info' : '']" :title="row.receipt.title" />
-                </p>
+                </div>
               </template>
             </UChatMessage>
           </template>
