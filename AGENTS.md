@@ -56,7 +56,7 @@ Requires GraalVM 25. With SDKMAN, run `sdk env` in the repo root to switch to th
 mvn -pl server -am quarkus:dev          # dev mode (add -Dskip.npm to skip rebuilding the UI)
 mvn verify                              # JVM build + tests
 mvn verify -Dnative                     # native image + native ITs
-./server/target/kreteg-server-0.2.0-runner
+./server/target/kreteg-server-0.3.0-SNAPSHOT-runner
 ```
 
 Maven builds the UI with its own Node (into `ui/target/node`, version pinned in `ui/pom.xml` and `ui/.nvmrc`).
