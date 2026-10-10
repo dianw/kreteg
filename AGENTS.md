@@ -43,7 +43,8 @@ classes, where Quarkus supports only field injection.
 | `/api/...` | REST for the inbox watch loop, scripts and the UI; see [client/README.md](client/README.md) |
 | `GET /` | Static UI from the `kreteg-ui` jar (`META-INF/resources`); other page paths fall back to `index.html` (`core.web.SpaFallback`) |
 
-Every message goes to all other members of its conversation; `to` names the members expected to answer.
+A message with `to` reaches the inboxes of the members it names, who are expected to answer; a message without `to`
+reaches every other member. History shows every message to every member.
 Each member has a cursor per conversation, and an inbox call returns each message once.
 Connecting a harness and keeping an idle agent listening is described in [client/README.md](client/README.md).
 

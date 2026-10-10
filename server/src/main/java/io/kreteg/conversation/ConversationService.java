@@ -23,9 +23,9 @@ import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
- * Multi-party conversations between registered participants. Every message goes to all other members of its
- * conversation; {@code to} only marks whom the sender expects an answer from. Both the MCP tools and the REST API
- * delegate here.
+ * Multi-party conversations between registered participants. A message reaches the inboxes of the members named in
+ * its {@code to}, or of every other member when {@code to} is empty; history shows every message to everyone. Both the
+ * MCP tools and the REST API delegate here.
  */
 @ApplicationScoped
 public class ConversationService {
@@ -129,7 +129,7 @@ public class ConversationService {
         }
 
         Message message = store.insertMessage("m-" + shortId(), conversation, me, recipients, reply, text);
-        for (String member : conversation.members()) {
+        for (String member : recipients.isEmpty() ? conversation.members() : recipients) {
             if (!member.equals(me)) {
                 wake(member);
             }
@@ -138,7 +138,8 @@ public class ConversationService {
     }
 
     /**
-     * Takes {@code me}'s new messages across all their conversations, waiting up to {@code waitSeconds} (capped by
+     * Takes {@code me}'s new messages (addressed to them, or to nobody in particular) across all their conversations,
+     * waiting up to {@code waitSeconds} (capped by
      * {@code kreteg.inbox.max-wait-seconds}) for the first one. Each message is returned once.
      */
     public List<Message> inbox(String me, int waitSeconds, int limit) {

@@ -34,19 +34,66 @@ class ConversationResourceTest {
     }
 
     @Test
-    void messageReachesEveryOtherMemberOnce() {
+    void announcementReachesEveryOtherMemberOnce() {
         String conversation = create(alice, "release", bob, carol);
 
-        send(alice, conversation, Map.of("text", "who owns the changelog?", "to", List.of(bob)));
+        send(alice, conversation, Map.of("text", "release is tomorrow"));
+
+        JsonPath bobInbox = inbox(bob, 0);
+        assertThat(bobInbox.getList("text", String.class)).containsExactly("release is tomorrow");
+        assertThat(bobInbox.getList("[0].to", String.class)).isEmpty();
+        assertThat(bobInbox.getString("[0].from")).isEqualTo(alice);
+        assertThat(bobInbox.getString("[0].title")).isEqualTo("release");
+        assertThat(inbox(carol, 0).getList("text", String.class)).containsExactly("release is tomorrow");
+        assertThat(inbox(alice, 0).getList("$")).isEmpty();
+        assertThat(inbox(bob, 0).getList("$")).isEmpty();
+    }
+
+    @Test
+    void addressedMessageReachesOnlyNamedMembers() {
+        String conversation = create(alice, "changelog", bob, carol);
+
+        long seq = send(alice, conversation, Map.of("text", "who owns the changelog?", "to", List.of(bob)))
+                .getLong("seq");
 
         JsonPath bobInbox = inbox(bob, 0);
         assertThat(bobInbox.getList("text", String.class)).containsExactly("who owns the changelog?");
         assertThat(bobInbox.getList("[0].to", String.class)).containsExactly(bob);
-        assertThat(bobInbox.getString("[0].from")).isEqualTo(alice);
-        assertThat(bobInbox.getString("[0].title")).isEqualTo("release");
-        assertThat(inbox(carol, 0).getList("text", String.class)).containsExactly("who owns the changelog?");
-        assertThat(inbox(alice, 0).getList("$")).isEmpty();
-        assertThat(inbox(bob, 0).getList("$")).isEmpty();
+        assertThat(inbox(carol, 0).getList("$")).isEmpty();
+        // Skipped, not lost: history still shows it, and carol's cursor has moved past it
+        assertThat(given().when().get("/api/conversations/{id}/messages", conversation)
+                .then().statusCode(200)
+                .extract().jsonPath().getList("text", String.class))
+                .containsExactly("who owns the changelog?");
+        assertThat(readSeq(conversation)).containsEntry(carol, seq);
+    }
+
+    @Test
+    void waitingNonAddresseeGetsNothing() throws Exception {
+        String conversation = create(alice, "quiet", bob, carol);
+
+        CompletableFuture<JsonPath> carolWaiting = CompletableFuture.supplyAsync(() -> inbox(carol, 3));
+        TimeUnit.MILLISECONDS.sleep(500);
+        send(alice, conversation, Map.of("text", "bob only", "to", List.of(bob)));
+
+        assertThat(carolWaiting.get(10, TimeUnit.SECONDS).getList("$")).isEmpty();
+        assertThat(inbox(bob, 0).getList("text", String.class)).containsExactly("bob only");
+    }
+
+    @Test
+    void truncatedInboxKeepsLaterAddressedMessages() {
+        String conversation = create(alice, "batch", bob, carol);
+        send(alice, conversation, Map.of("text", "carol 1", "to", List.of(carol)));
+        long first = send(alice, conversation, Map.of("text", "bob 1", "to", List.of(bob))).getLong("seq");
+        send(alice, conversation, Map.of("text", "carol 2", "to", List.of(carol)));
+        send(alice, conversation, Map.of("text", "bob 2", "to", List.of(bob)));
+        long last = send(alice, conversation, Map.of("text", "carol 3", "to", List.of(carol))).getLong("seq");
+
+        assertThat(inbox(bob, 0, 1).getList("text", String.class)).containsExactly("bob 1");
+        assertThat(readSeq(conversation)).containsEntry(bob, first);
+        assertThat(inbox(bob, 0, 1).getList("text", String.class)).containsExactly("bob 2");
+        assertThat(inbox(bob, 0, 1).getList("$")).isEmpty();
+        assertThat(readSeq(conversation)).containsEntry(bob, last);
     }
 
     @Test
@@ -204,9 +251,19 @@ class ConversationResourceTest {
     }
 
     private static JsonPath inbox(String name, int waitSeconds) {
-        return given().queryParam("wait", waitSeconds)
+        return inbox(name, waitSeconds, 50);
+    }
+
+    private static JsonPath inbox(String name, int waitSeconds, int limit) {
+        return given().queryParam("wait", waitSeconds).queryParam("limit", limit)
                 .when().get("/api/participants/{name}/inbox", name)
                 .then().statusCode(200)
                 .extract().jsonPath();
+    }
+
+    private static Map<String, Long> readSeq(String conversation) {
+        return given().when().get("/api/conversations/{id}", conversation)
+                .then().statusCode(200)
+                .extract().jsonPath().getMap("readSeq", String.class, Long.class);
     }
 }
