@@ -106,7 +106,7 @@ public class ConversationService {
         Conversation conversation = requireConversation(conversationId);
         return new ConversationDetail(conversation.id(), conversation.title(), conversation.createdBy(),
                 conversation.createdAt(), conversation.lastActivityAt(), conversation.members(),
-                store.readSeqs(conversationId));
+                store.readSeqs(conversationId), store.doneSeqs(conversationId));
     }
 
     public Message send(String me, String conversationId, String text, List<String> to, String replyTo) {
@@ -135,6 +135,20 @@ public class ConversationService {
             }
         }
         return message;
+    }
+
+    /**
+     * Records that {@code me} has handled the message without answering it, e.g. because it said not to reply. Posts
+     * nothing and wakes nobody; the UI uses it to stop showing {@code me} as working on the ask.
+     */
+    public void done(String me, String conversationId, String messageId) {
+        requireRegistered(me);
+        Conversation conversation = requireConversation(conversationId);
+        requireMembership(me, conversation);
+        if (messageId == null || !store.messageExists(messageId.strip(), conversationId)) {
+            throw new ConversationException(NOT_FOUND, "No message " + messageId + " in " + conversationId);
+        }
+        store.markDone(conversationId, me, messageId.strip());
     }
 
     /**

@@ -42,6 +42,7 @@ public class ConversationStore {
                 conversation_id  TEXT NOT NULL REFERENCES conversation (id),
                 participant      TEXT NOT NULL REFERENCES participant (name),
                 cursor_seq       INTEGER NOT NULL DEFAULT 0,
+                done_seq         INTEGER NOT NULL DEFAULT 0,
                 joined_at        INTEGER NOT NULL DEFAULT (unixepoch('subsec') * 1000),
                 PRIMARY KEY (conversation_id, participant)
             );
@@ -58,6 +59,13 @@ public class ConversationStore {
             );
             CREATE INDEX IF NOT EXISTS message_conversation_idx ON message (conversation_id, seq);
             """;
+
+    /** Columns added after the first release, as {table, column, definition}, for databases created before them. */
+    private static final String[][] ADDED_COLUMNS = {
+            {"member", "done_seq", "INTEGER NOT NULL DEFAULT 0"},
+    };
+
+    private static final String COUNT_COLUMN = "SELECT count(*) FROM pragma_table_info(?) WHERE name = ?";
 
     private static final String UPSERT_PARTICIPANT = """
             INSERT INTO participant (name, description) VALUES (?, ?)
@@ -102,6 +110,15 @@ public class ConversationStore {
 
     private static final String SELECT_READ_SEQ =
             "SELECT participant, cursor_seq FROM member WHERE conversation_id = ? ORDER BY joined_at, participant";
+
+    private static final String SELECT_DONE_SEQ =
+            "SELECT participant, done_seq FROM member WHERE conversation_id = ? ORDER BY joined_at, participant";
+
+    /** Never moves backwards, so closing an older ask after a newer one keeps the newer mark. */
+    private static final String MARK_DONE = """
+            UPDATE member SET done_seq = max(done_seq, coalesce((SELECT seq FROM message WHERE id = ? AND conversation_id = ?), 0))
+            WHERE conversation_id = ? AND participant = ?
+            """;
 
     private static final String DELETE_MEMBER = "DELETE FROM member WHERE conversation_id = ? AND participant = ?";
 
@@ -159,6 +176,13 @@ public class ConversationStore {
             for (String ddl : SCHEMA.split(";")) {
                 if (!ddl.isBlank()) {
                     h.execute(ddl);
+                }
+            }
+            for (String[] column : ADDED_COLUMNS) {
+                boolean exists = h.createQuery(COUNT_COLUMN).bind(0, column[0]).bind(1, column[1])
+                        .mapTo(Integer.class).one() > 0;
+                if (!exists) {
+                    h.execute("ALTER TABLE " + column[0] + " ADD COLUMN " + column[1] + " " + column[2]);
                 }
             }
         });
@@ -229,12 +253,22 @@ public class ConversationStore {
 
     /** Each member's cursor in the conversation, in joining order. */
     public Map<String, Long> readSeqs(String conversationId) {
-        Map<String, Long> seqs = new LinkedHashMap<>();
-        jdbi.useHandle(h -> h.createQuery(SELECT_READ_SEQ)
-                .bind(0, conversationId)
-                .map((rs, ctx) -> Map.entry(rs.getString(1), rs.getLong(2)))
-                .forEach(e -> seqs.put(e.getKey(), e.getValue())));
-        return seqs;
+        return memberSeqs(SELECT_READ_SEQ, conversationId);
+    }
+
+    /** Each member's last ask closed without an answer (see {@link #markDone}), in joining order. */
+    public Map<String, Long> doneSeqs(String conversationId) {
+        return memberSeqs(SELECT_DONE_SEQ, conversationId);
+    }
+
+    /** Records that the member has handled the message and everything before it without answering. */
+    public void markDone(String conversationId, String participant, String messageId) {
+        write(h -> h.createUpdate(MARK_DONE)
+                .bind(0, messageId)
+                .bind(1, conversationId)
+                .bind(2, conversationId)
+                .bind(3, participant)
+                .execute());
     }
 
     /** Appends a message; returns it with its assigned {@code seq} and {@code createdAt}. */
@@ -292,6 +326,15 @@ public class ConversationStore {
                     .execute();
             return messages;
         });
+    }
+
+    private Map<String, Long> memberSeqs(String sql, String conversationId) {
+        Map<String, Long> seqs = new LinkedHashMap<>();
+        jdbi.useHandle(h -> h.createQuery(sql)
+                .bind(0, conversationId)
+                .map((rs, ctx) -> Map.entry(rs.getString(1), rs.getLong(2)))
+                .forEach(e -> seqs.put(e.getKey(), e.getValue())));
+        return seqs;
     }
 
     private static int insertMember(Handle h, String conversationId, String participant) {

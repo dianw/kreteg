@@ -43,7 +43,7 @@ Polling consumes messages, so use one of the two per participant, not both.
 | `GET /api/participants/{name}/inbox?wait=&limit=` | take new messages addressed to `name` or to everyone, long-polling up to `wait` seconds |
 | `POST /api/conversations` | create `{from, title, members}` |
 | `GET /api/conversations?member=` | conversations, optionally for one member |
-| `GET /api/conversations/{id}` | one conversation, with `readSeq`: how far each member's inbox has read, including messages skipped because they were addressed to others |
+| `GET /api/conversations/{id}` | one conversation, with `readSeq`: how far each member's inbox has read, including messages skipped because they were addressed to others; and `doneSeq`: the latest message each member closed with the `done` tool, handling it without an answer |
 | `POST /api/conversations/{id}/members` | join `{name}` |
 | `POST /api/conversations/{id}/messages` | send `{from, text, to, replyTo}` |
 | `GET /api/conversations/{id}/messages?since=&limit=` | history |
