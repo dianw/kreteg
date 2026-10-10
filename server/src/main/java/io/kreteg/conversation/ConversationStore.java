@@ -138,6 +138,10 @@ public class ConversationStore {
     private static final String SELECT_HISTORY = SELECT_MESSAGES
             + " WHERE m.conversation_id = ? AND m.seq > ? ORDER BY m.seq LIMIT ?";
 
+    /** The last messages before a seq, newest first in the subquery so LIMIT keeps the latest, then oldest first. */
+    private static final String SELECT_HISTORY_BEFORE = "SELECT * FROM (" + SELECT_MESSAGES
+            + " WHERE m.conversation_id = ? AND m.seq < ? ORDER BY m.seq DESC LIMIT ?) ORDER BY seq";
+
     /** Messages addressed to the participant, or to nobody in particular (an empty {@code to}). */
     private static final String SELECT_INBOX = SELECT_MESSAGES + """
              JOIN member mb ON mb.conversation_id = m.conversation_id AND m.seq > mb.cursor_seq
@@ -298,6 +302,15 @@ public class ConversationStore {
         return jdbi.withHandle(h -> h.createQuery(SELECT_HISTORY)
                 .bind(0, conversationId)
                 .bind(1, sinceSeq)
+                .bind(2, limit)
+                .map((rs, ctx) -> message(rs))
+                .list());
+    }
+
+    public List<Message> historyBefore(String conversationId, long beforeSeq, int limit) {
+        return jdbi.withHandle(h -> h.createQuery(SELECT_HISTORY_BEFORE)
+                .bind(0, conversationId)
+                .bind(1, beforeSeq)
                 .bind(2, limit)
                 .map((rs, ctx) -> message(rs))
                 .list());

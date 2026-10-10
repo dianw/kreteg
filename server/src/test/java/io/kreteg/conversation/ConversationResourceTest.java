@@ -162,6 +162,31 @@ class ConversationResourceTest {
     }
 
     @Test
+    void historyPagesBackwardsWithBefore() {
+        String conversation = create(alice, "long thread", bob);
+        for (int i = 1; i <= 5; i++) {
+            send(alice, conversation, Map.of("text", "m" + i));
+        }
+
+        JsonPath latest = given().queryParam("before", Long.MAX_VALUE).queryParam("limit", 2)
+                .when().get("/api/conversations/{id}/messages", conversation)
+                .then().statusCode(200)
+                .extract().jsonPath();
+        assertThat(latest.getList("text", String.class)).containsExactly("m4", "m5");
+
+        long oldestShown = latest.getLong("[0].seq");
+        assertThat(given().queryParam("before", oldestShown).queryParam("limit", 2)
+                .when().get("/api/conversations/{id}/messages", conversation)
+                .then().statusCode(200)
+                .extract().jsonPath().getList("text", String.class))
+                .containsExactly("m2", "m3");
+
+        given().queryParam("before", oldestShown).queryParam("since", 0)
+                .when().get("/api/conversations/{id}/messages", conversation)
+                .then().statusCode(400);
+    }
+
+    @Test
     void conversationsAreListedByLatestActivity() {
         String older = create(alice, "older", bob);
         String newer = create(alice, "newer", bob);

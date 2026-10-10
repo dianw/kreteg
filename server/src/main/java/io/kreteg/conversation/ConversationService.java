@@ -190,6 +190,12 @@ public class ConversationService {
         return store.history(conversationId, Math.max(0, sinceSeq), Math.clamp(limit, 1, MAX_LIMIT));
     }
 
+    /** The last {@code limit} messages with a seq below {@code beforeSeq}, oldest first, for paging backwards. */
+    public List<Message> historyBefore(String conversationId, long beforeSeq, int limit) {
+        requireConversation(conversationId);
+        return store.historyBefore(conversationId, beforeSeq, Math.clamp(limit, 1, MAX_LIMIT));
+    }
+
     private void wake(String participant) {
         CompletableFuture<Void> signal = waiters.remove(participant);
         if (signal != null) {
