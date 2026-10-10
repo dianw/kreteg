@@ -2,6 +2,8 @@ target/
 *.db
 *.db-shm
 *.db-wal
+# database backups, e.g. kreteg.db.bak-20261010
+*.db.bak*
 .idea/
 *.iml
 .vscode/

@@ -23,9 +23,9 @@ import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
- * Multi-party conversations between registered participants. Every message goes to all other members of its
- * conversation; {@code to} only marks whom the sender expects an answer from. Both the MCP tools and the REST API
- * delegate here.
+ * Multi-party conversations between registered participants. A message reaches the inboxes of the members named in
+ * its {@code to}, or of every other member when {@code to} is empty; history shows every message to everyone. Both the
+ * MCP tools and the REST API delegate here.
  */
 @ApplicationScoped
 public class ConversationService {
@@ -106,7 +106,7 @@ public class ConversationService {
         Conversation conversation = requireConversation(conversationId);
         return new ConversationDetail(conversation.id(), conversation.title(), conversation.createdBy(),
                 conversation.createdAt(), conversation.lastActivityAt(), conversation.members(),
-                store.readSeqs(conversationId));
+                store.readSeqs(conversationId), store.doneSeqs(conversationId));
     }
 
     public Message send(String me, String conversationId, String text, List<String> to, String replyTo) {
@@ -129,7 +129,7 @@ public class ConversationService {
         }
 
         Message message = store.insertMessage("m-" + shortId(), conversation, me, recipients, reply, text);
-        for (String member : conversation.members()) {
+        for (String member : recipients.isEmpty() ? conversation.members() : recipients) {
             if (!member.equals(me)) {
                 wake(member);
             }
@@ -138,7 +138,22 @@ public class ConversationService {
     }
 
     /**
-     * Takes {@code me}'s new messages across all their conversations, waiting up to {@code waitSeconds} (capped by
+     * Records that {@code me} has handled the message without answering it, e.g. because it said not to reply. Posts
+     * nothing and wakes nobody; the UI uses it to stop showing {@code me} as working on the ask.
+     */
+    public void done(String me, String conversationId, String messageId) {
+        requireRegistered(me);
+        Conversation conversation = requireConversation(conversationId);
+        requireMembership(me, conversation);
+        if (messageId == null || !store.messageExists(messageId.strip(), conversationId)) {
+            throw new ConversationException(NOT_FOUND, "No message " + messageId + " in " + conversationId);
+        }
+        store.markDone(conversationId, me, messageId.strip());
+    }
+
+    /**
+     * Takes {@code me}'s new messages (addressed to them, or to nobody in particular) across all their conversations,
+     * waiting up to {@code waitSeconds} (capped by
      * {@code kreteg.inbox.max-wait-seconds}) for the first one. Each message is returned once.
      */
     public List<Message> inbox(String me, int waitSeconds, int limit) {
@@ -173,6 +188,12 @@ public class ConversationService {
     public List<Message> history(String conversationId, long sinceSeq, int limit) {
         requireConversation(conversationId);
         return store.history(conversationId, Math.max(0, sinceSeq), Math.clamp(limit, 1, MAX_LIMIT));
+    }
+
+    /** The last {@code limit} messages with a seq below {@code beforeSeq}, oldest first, for paging backwards. */
+    public List<Message> historyBefore(String conversationId, long beforeSeq, int limit) {
+        requireConversation(conversationId);
+        return store.historyBefore(conversationId, beforeSeq, Math.clamp(limit, 1, MAX_LIMIT));
     }
 
     private void wake(String participant) {

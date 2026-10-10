@@ -40,5 +40,9 @@ export function useKretegApi() {
     history: (id: string, since: number, limit = 100) =>
       call(() => $fetch<Message[]>(`/api/conversations/${encodeURIComponent(id)}/messages`,
         { query: { since, limit } })),
+    /** The last `limit` messages before seq `before`, oldest first; empty once the start is reached. */
+    historyBefore: (id: string, before: number, limit = 100) =>
+      call(() => $fetch<Message[]>(`/api/conversations/${encodeURIComponent(id)}/messages`,
+        { query: { before, limit } })),
   }
 }

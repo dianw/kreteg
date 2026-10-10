@@ -55,8 +55,9 @@ public class ConversationTools {
     }
 
     @Tool(name = "create_conversation", description = """
-            Start a conversation with other registered participants. You are added automatically. Every member \
-            receives every message in it.""")
+            Start a conversation with other registered participants. You are added automatically. A message reaches \
+            the inboxes of the members named in its 'to', or of every member when 'to' is empty; history shows every \
+            message to every member.""")
     public Conversation createConversation(@ToolArg(description = ME) String me,
                                            @ToolArg(description = "Short topic of the conversation") String title,
                                            @ToolArg(description = "Names of the other participants to add",
@@ -84,8 +85,9 @@ public class ConversationTools {
     }
 
     @Tool(description = """
-            Send a message to a conversation. Every other member receives it. Put the members you expect an answer \
-            from in 'to'; leave it out for an announcement. When answering a message, set 'reply_to' to its id. \
+            Send a message to a conversation. If 'to' names members, only they receive it in their inbox, so name \
+            everyone who needs to act on it or know about it; leave 'to' out for an announcement every other member \
+            receives. Everyone can still read it with history. When answering a message, set 'reply_to' to its id. \
             Put one request per message, with enough context to act on it without asking back.""")
     public Message send(@ToolArg(description = ME) String me,
                         @ToolArg(description = "Conversation id") String conversation,
@@ -97,16 +99,31 @@ public class ConversationTools {
     }
 
     @Tool(description = """
-            Fetch your new messages from all your conversations, oldest first. Each message is returned only once. \
+            Mark a message that names you in 'to' as handled without an answer, when it needs none: you were told \
+            not to reply, or it is only for your information. Sends nothing and notifies nobody; it tells the sender \
+            you are no longer working on it.""")
+    public String done(@ToolArg(description = ME) String me,
+                       @ToolArg(description = "Conversation id") String conversation,
+                       @ToolArg(description = "Id of the message you handled") String message) {
+        service.done(me, conversation, message);
+        return "Marked " + message + " done";
+    }
+
+    @Tool(description = """
+            Fetch your new messages from all your conversations, oldest first: those that name you in 'to', and \
+            announcements with no 'to'. Messages addressed only to others are not delivered here; read them with \
+            history. Each message is returned only once. \
             If nothing is waiting, blocks up to 'wait_seconds' for the first message. Answer messages that name you \
-            in 'to', even if only to say you cannot help: the sender is waiting.""")
+            in 'to', even if only to say you cannot help: the sender is waiting. If one needs no answer, call 'done' \
+            with its id instead.""")
     public Messages inbox(@ToolArg(description = ME) String me,
                                @ToolArg(name = "wait_seconds", description = "Seconds to wait when empty, 0-30",
                                        defaultValue = "0") int waitSeconds) {
         return new Messages(service.inbox(me, Math.clamp(waitSeconds, 0, MAX_TOOL_WAIT_SECONDS), 50));
     }
 
-    @Tool(description = "Read a conversation's messages, oldest first, including ones already delivered to you.")
+    @Tool(description = "Read a conversation's messages, oldest first, including ones already delivered to you and "
+            + "ones addressed only to others.")
     public Messages history(@ToolArg(description = "Conversation id") String conversation,
                                  @ToolArg(description = "Only messages with seq greater than this",
                                          defaultValue = "0") long since) {

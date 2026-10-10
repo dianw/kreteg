@@ -42,6 +42,7 @@ public class ConversationStore {
                 conversation_id  TEXT NOT NULL REFERENCES conversation (id),
                 participant      TEXT NOT NULL REFERENCES participant (name),
                 cursor_seq       INTEGER NOT NULL DEFAULT 0,
+                done_seq         INTEGER NOT NULL DEFAULT 0,
                 joined_at        INTEGER NOT NULL DEFAULT (unixepoch('subsec') * 1000),
                 PRIMARY KEY (conversation_id, participant)
             );
@@ -58,6 +59,13 @@ public class ConversationStore {
             );
             CREATE INDEX IF NOT EXISTS message_conversation_idx ON message (conversation_id, seq);
             """;
+
+    /** Columns added after the first release, as {table, column, definition}, for databases created before them. */
+    private static final String[][] ADDED_COLUMNS = {
+            {"member", "done_seq", "INTEGER NOT NULL DEFAULT 0"},
+    };
+
+    private static final String COUNT_COLUMN = "SELECT count(*) FROM pragma_table_info(?) WHERE name = ?";
 
     private static final String UPSERT_PARTICIPANT = """
             INSERT INTO participant (name, description) VALUES (?, ?)
@@ -103,6 +111,15 @@ public class ConversationStore {
     private static final String SELECT_READ_SEQ =
             "SELECT participant, cursor_seq FROM member WHERE conversation_id = ? ORDER BY joined_at, participant";
 
+    private static final String SELECT_DONE_SEQ =
+            "SELECT participant, done_seq FROM member WHERE conversation_id = ? ORDER BY joined_at, participant";
+
+    /** Never moves backwards, so closing an older ask after a newer one keeps the newer mark. */
+    private static final String MARK_DONE = """
+            UPDATE member SET done_seq = max(done_seq, coalesce((SELECT seq FROM message WHERE id = ? AND conversation_id = ?), 0))
+            WHERE conversation_id = ? AND participant = ?
+            """;
+
     private static final String DELETE_MEMBER = "DELETE FROM member WHERE conversation_id = ? AND participant = ?";
 
     private static final String INSERT_MESSAGE = """
@@ -121,14 +138,29 @@ public class ConversationStore {
     private static final String SELECT_HISTORY = SELECT_MESSAGES
             + " WHERE m.conversation_id = ? AND m.seq > ? ORDER BY m.seq LIMIT ?";
 
+    /** The last messages before a seq, newest first in the subquery so LIMIT keeps the latest, then oldest first. */
+    private static final String SELECT_HISTORY_BEFORE = "SELECT * FROM (" + SELECT_MESSAGES
+            + " WHERE m.conversation_id = ? AND m.seq < ? ORDER BY m.seq DESC LIMIT ?) ORDER BY seq";
+
+    /** Messages addressed to the participant, or to nobody in particular (an empty {@code to}). */
     private static final String SELECT_INBOX = SELECT_MESSAGES + """
              JOIN member mb ON mb.conversation_id = m.conversation_id AND m.seq > mb.cursor_seq
             WHERE mb.participant = ? AND m.sender <> ?
+              AND (m.recipients IS NULL OR instr(',' || m.recipients || ',', ',' || ? || ',') > 0)
             ORDER BY m.seq LIMIT ?
             """;
 
-    private static final String ADVANCE_CURSOR =
-            "UPDATE member SET cursor_seq = ? WHERE conversation_id = ? AND participant = ? AND cursor_seq < ?";
+    /**
+     * Moves each of the participant's cursors to the last message at or below {@code seq} in that conversation, so
+     * messages addressed to others that the inbox scan passed over are not scanned again.
+     */
+    private static final String ADVANCE_CURSORS = """
+            UPDATE member SET cursor_seq = (
+                SELECT max(m.seq) FROM message m WHERE m.conversation_id = member.conversation_id AND m.seq <= ?)
+            WHERE participant = ? AND cursor_seq < (
+                SELECT coalesce(max(m.seq), 0) FROM message m
+                WHERE m.conversation_id = member.conversation_id AND m.seq <= ?)
+            """;
 
     private final Jdbi jdbi;
 
@@ -148,6 +180,13 @@ public class ConversationStore {
             for (String ddl : SCHEMA.split(";")) {
                 if (!ddl.isBlank()) {
                     h.execute(ddl);
+                }
+            }
+            for (String[] column : ADDED_COLUMNS) {
+                boolean exists = h.createQuery(COUNT_COLUMN).bind(0, column[0]).bind(1, column[1])
+                        .mapTo(Integer.class).one() > 0;
+                if (!exists) {
+                    h.execute("ALTER TABLE " + column[0] + " ADD COLUMN " + column[1] + " " + column[2]);
                 }
             }
         });
@@ -218,12 +257,22 @@ public class ConversationStore {
 
     /** Each member's cursor in the conversation, in joining order. */
     public Map<String, Long> readSeqs(String conversationId) {
-        Map<String, Long> seqs = new LinkedHashMap<>();
-        jdbi.useHandle(h -> h.createQuery(SELECT_READ_SEQ)
-                .bind(0, conversationId)
-                .map((rs, ctx) -> Map.entry(rs.getString(1), rs.getLong(2)))
-                .forEach(e -> seqs.put(e.getKey(), e.getValue())));
-        return seqs;
+        return memberSeqs(SELECT_READ_SEQ, conversationId);
+    }
+
+    /** Each member's last ask closed without an answer (see {@link #markDone}), in joining order. */
+    public Map<String, Long> doneSeqs(String conversationId) {
+        return memberSeqs(SELECT_DONE_SEQ, conversationId);
+    }
+
+    /** Records that the member has handled the message and everything before it without answering. */
+    public void markDone(String conversationId, String participant, String messageId) {
+        write(h -> h.createUpdate(MARK_DONE)
+                .bind(0, messageId)
+                .bind(1, conversationId)
+                .bind(2, conversationId)
+                .bind(3, participant)
+                .execute());
     }
 
     /** Appends a message; returns it with its assigned {@code seq} and {@code createdAt}. */
@@ -258,30 +307,47 @@ public class ConversationStore {
                 .list());
     }
 
+    public List<Message> historyBefore(String conversationId, long beforeSeq, int limit) {
+        return jdbi.withHandle(h -> h.createQuery(SELECT_HISTORY_BEFORE)
+                .bind(0, conversationId)
+                .bind(1, beforeSeq)
+                .bind(2, limit)
+                .map((rs, ctx) -> message(rs))
+                .list());
+    }
+
     /**
-     * Returns the participant's undelivered messages from all their conversations, oldest first and excluding their
-     * own, and moves each membership cursor past what was returned.
+     * Returns the participant's undelivered messages from all their conversations, oldest first, excluding their own
+     * and those addressed only to others, and moves each membership cursor past everything the scan covered: up to
+     * the last returned message when {@code limit} cut the batch short, otherwise to the end of each conversation.
+     * Messages are inserted under the same write lock, so none can appear between the scan and the cursor update.
      */
     public List<Message> takeInbox(String participant, int limit) {
         return write(h -> {
             List<Message> messages = h.createQuery(SELECT_INBOX)
                     .bind(0, participant)
                     .bind(1, participant)
-                    .bind(2, limit)
+                    .bind(2, participant)
+                    .bind(3, limit)
                     .map((rs, ctx) -> message(rs))
                     .list();
-            Map<String, Long> lastSeqByConversation = new LinkedHashMap<>();
-            for (Message message : messages) {
-                lastSeqByConversation.merge(message.conversation(), message.seq(), Math::max);
-            }
-            lastSeqByConversation.forEach((conversationId, seq) -> h.createUpdate(ADVANCE_CURSOR)
-                    .bind(0, seq)
-                    .bind(1, conversationId)
-                    .bind(2, participant)
-                    .bind(3, seq)
-                    .execute());
+            long scannedTo = messages.size() < limit ? Long.MAX_VALUE : messages.getLast().seq();
+            h.createUpdate(ADVANCE_CURSORS)
+                    .bind(0, scannedTo)
+                    .bind(1, participant)
+                    .bind(2, scannedTo)
+                    .execute();
             return messages;
         });
+    }
+
+    private Map<String, Long> memberSeqs(String sql, String conversationId) {
+        Map<String, Long> seqs = new LinkedHashMap<>();
+        jdbi.useHandle(h -> h.createQuery(sql)
+                .bind(0, conversationId)
+                .map((rs, ctx) -> Map.entry(rs.getString(1), rs.getLong(2)))
+                .forEach(e -> seqs.put(e.getKey(), e.getValue())));
+        return seqs;
     }
 
     private static int insertMember(Handle h, String conversationId, String participant) {

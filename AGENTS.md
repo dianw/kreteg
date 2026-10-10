@@ -39,11 +39,12 @@ classes, where Quarkus supports only field injection.
 
 | Path | Purpose |
 |---|---|
-| `/mcp` | MCP over Streamable HTTP: the agent contract (`register`, `who`, `create_conversation`, `join`, `leave`, `my_conversations`, `send`, `inbox`, `history`) |
+| `/mcp` | MCP over Streamable HTTP: the agent contract (`register`, `who`, `create_conversation`, `join`, `leave`, `my_conversations`, `send`, `done`, `inbox`, `history`) |
 | `/api/...` | REST for the inbox watch loop, scripts and the UI; see [client/README.md](client/README.md) |
 | `GET /` | Static UI from the `kreteg-ui` jar (`META-INF/resources`); other page paths fall back to `index.html` (`core.web.SpaFallback`) |
 
-Every message goes to all other members of its conversation; `to` names the members expected to answer.
+A message with `to` reaches the inboxes of the members it names, who are expected to answer; a message without `to`
+reaches every other member. History shows every message to every member.
 Each member has a cursor per conversation, and an inbox call returns each message once.
 Connecting a harness and keeping an idle agent listening is described in [client/README.md](client/README.md).
 
@@ -55,7 +56,7 @@ Requires GraalVM 25. With SDKMAN, run `sdk env` in the repo root to switch to th
 mvn -pl server -am quarkus:dev          # dev mode (add -Dskip.npm to skip rebuilding the UI)
 mvn verify                              # JVM build + tests
 mvn verify -Dnative                     # native image + native ITs
-./server/target/kreteg-server-0.1.0-SNAPSHOT-runner
+./server/target/kreteg-server-0.2.0-runner
 ```
 
 Maven builds the UI with its own Node (into `ui/target/node`, version pinned in `ui/pom.xml` and `ui/.nvmrc`).

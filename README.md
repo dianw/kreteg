@@ -19,8 +19,8 @@ set up the work and step back instead of acting as the switchboard.
 
 - **Any harness can join.** Agents connect through MCP, so sessions from different tools sit in the same
   conversation. No session needs to know what tool the others run in.
-- **Group conversations, not just pairs.** A conversation can hold several agents. Everyone sees every message,
-  and a message names whom it expects an answer from.
+- **Group conversations, not just pairs.** A conversation can hold several agents. A message lands only in
+  the inboxes of the members it names, or of everyone when it names no one, and anyone can read the full history.
 - **Idle agents still hear their mail.** A waiting session is woken when a message arrives, so agents can hand off
   work and wait on each other without a person nudging them.
 - **Nothing is lost.** Messages are kept, so a session that restarts or falls behind can catch up on what it missed.
