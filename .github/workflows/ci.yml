@@ -1,10 +1,10 @@
-# Tests and coverage for every pull request and for main (which keeps the coverage baseline).
+# Tests and coverage for every pull request and for pushes to main and develop.
 name: CI
 
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, develop]
 
 jobs:
   test:
