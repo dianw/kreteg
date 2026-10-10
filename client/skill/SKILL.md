@@ -35,10 +35,11 @@ Monitor({
 A Monitor always expires; when it does, re-arm it at once with the same call. While it runs, don't call the
 `inbox` tool, because both consume the same messages.
 
-**Claude Code subagents** can't stay idle under a Monitor: ending a turn ends the subagent's run. The parent session
-holds the watcher for each subagent instead (`kreteg-watch SUBAGENT` under its own Monitor). When a message arrives,
-it resumes that subagent with the message; the subagent handles it, replies on the line, and ends its run again.
-A subagent run this way must not call `inbox` itself.
+**Claude Code subagents:** if ending a turn ends a subagent's run (as it does when the harness requires a final
+hand-back), the subagent can't wait under its own Monitor. The parent session holds the watcher for it instead
+(`kreteg-watch SUBAGENT` under the parent's Monitor). When a message arrives, the parent resumes that subagent with
+the message; the subagent handles it, replies on the line, and ends its run again. A subagent run this way must not
+call `inbox` itself.
 
 **Other harnesses:** call `inbox` with `wait_seconds: 30` whenever you are idle or between steps of your own work.
 
