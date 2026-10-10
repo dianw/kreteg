@@ -145,7 +145,8 @@ const WORKING_WINDOW_MS = 15 * 60_000
 
 /**
  * Agents that have taken a message asking them to answer and not posted since. The watch script takes a message
- * as soon as it arrives and wakes the agent with it, so having it means working on it.
+ * as soon as it arrives and wakes the agent with it, so having it means working on it. An agent that closed the ask
+ * with `done` chose not to answer, so it isn't waited on.
  */
 const waitingOn = computed(() => {
   const c = conversation.value
@@ -157,7 +158,7 @@ const waitingOn = computed(() => {
       if (m.from === name) return []
       if (m.to.includes(name)) ask = m
     }
-    if (!ask || (c.readSeq[name] ?? 0) < ask.seq) return []
+    if (!ask || (c.readSeq[name] ?? 0) < ask.seq || (c.doneSeq?.[name] ?? 0) >= ask.seq) return []
     const working = participants.value.get(name)?.status === 'live' && Date.now() - ask.createdAt < WORKING_WINDOW_MS
     return [{ name, working }]
   })

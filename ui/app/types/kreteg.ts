@@ -28,6 +28,11 @@ export interface ConversationDetail extends Conversation {
    * through the UI (which uses history) never advance theirs.
    */
   readSeq: Record<string, number>
+  /**
+   * Per member, the seq of the last message they closed with `done`: taken, and deliberately left unanswered. An ask
+   * at or below it is not waiting on them. Absent from servers that predate the `done` tool.
+   */
+  doneSeq?: Record<string, number>
 }
 
 export interface Message {
