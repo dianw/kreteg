@@ -39,7 +39,9 @@ trap stop EXIT INT TERM
 
 say "UI on http://localhost:$UI_PORT (API proxied to :5784)"
 set -m
-(cd ui && exec node_modules/.bin/nuxt dev --port "$UI_PORT") &
+# Without a terminal on stdin: a background process group that reads the TTY is stopped (SIGTTIN) while Quarkus owns
+# the console, and Nuxt reads it for its keyboard shortcuts
+(cd ui && exec node_modules/.bin/nuxt dev --port "$UI_PORT" </dev/null) &
 nuxt_pid=$!
 set +m
 
