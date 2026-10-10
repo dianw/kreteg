@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import type { ConversationDetail, Message, Participant } from '~/types/kreteg'
 
-const PAGE = 100
-
 const route = useRoute()
 const id = route.params.id as string
 const api = useKretegApi()
@@ -42,11 +40,32 @@ function scrollToBottom() {
   scroller.value?.scrollTo({ top: scroller.value.scrollHeight })
 }
 
+/**
+ * The message the view is held on while older pages load above it, and its distance from the top of the scroller.
+ * Bubbles grow after they are added (Markdown is parsed asynchronously), and Safari has no CSS scroll anchoring, so
+ * the view is held by hand.
+ */
+let anchor: { id: string, top: number } | null = null
+
+function offsetOf(messageId: string) {
+  const el = document.querySelector(`[data-message-id="${messageId}"]`)
+  const box = scroller.value
+  return el && box ? el.getBoundingClientRect().top - box.getBoundingClientRect().top : null
+}
+
+function holdAnchor() {
+  if (!anchor || !scroller.value) return
+  const top = offsetOf(anchor.id)
+  if (top !== null) scroller.value.scrollTop += top - anchor.top
+}
+
 // Whether the view follows the newest message: true while the reader is at the bottom. Bubbles keep growing after
-// they are added (Markdown is parsed asynchronously), so the view is moved down whenever the thread changes size.
+// they are added, so the view is moved down whenever the thread changes size.
 let pinned = true
 function onScroll() {
   pinned = nearBottom()
+  if (anchor) anchor.top = offsetOf(anchor.id) ?? anchor.top
+  maybeLoadOlder()
 }
 
 const thread = useTemplateRef<HTMLElement>('thread')
@@ -56,13 +75,54 @@ watch(thread, (el) => {
   if (!el) return
   resizes = new ResizeObserver(() => {
     if (pinned) scrollToBottom()
+    else holdAnchor()
   })
   resizes.observe(el)
 })
 onBeforeUnmount(() => resizes?.disconnect())
 
+// A conversation opens on its latest page; older pages load as the reader scrolls up
+const PAGE = 50
+const LATEST = Number.MAX_SAFE_INTEGER
+const loaded = ref(false)
+const hasOlder = ref(false)
+const loadingOlder = ref(false)
+
+async function loadOlder() {
+  const first = messages.value[0]
+  if (!first || !hasOlder.value || loadingOlder.value) return
+  loadingOlder.value = true
+  try {
+    const page = await api.historyBefore(id, first.seq, PAGE)
+    hasOlder.value = page.length === PAGE
+    anchor = { id: first.id, top: offsetOf(first.id) ?? 0 }
+    messages.value.unshift(...page)
+    await nextTick()
+    if (pinned) scrollToBottom()
+    else holdAnchor()
+  } finally {
+    loadingOlder.value = false
+  }
+}
+
+/** Loads the page above when the reader is near the top, or when the thread doesn't fill the view yet. */
+function maybeLoadOlder() {
+  const el = scroller.value
+  if (el && el.scrollTop < 300 && hasOlder.value && !loadingOlder.value) loadOlder().then(() => nextTick(maybeLoadOlder)).catch(() => {})
+}
+
 // History, not inbox: reading must not consume anyone's messages
-usePolling(async () => {
+const history = usePolling(async () => {
+  if (!loaded.value) {
+    const page = await api.historyBefore(id, LATEST, PAGE)
+    messages.value = page
+    hasOlder.value = page.length === PAGE
+    loaded.value = true
+    await nextTick()
+    scrollToBottom()
+    maybeLoadOlder()
+    return
+  }
   let page: Message[]
   do {
     const since = messages.value.at(-1)?.seq ?? 0
@@ -73,6 +133,57 @@ usePolling(async () => {
     }
   } while (page.length === PAGE)
 }, 2000)
+
+/**
+ * Messages you sent that history has not returned yet, shown at the end of the thread straight away. Once the server
+ * answers, `sent` holds its record; the entry is dropped when that id arrives through history. The server's message
+ * is never pushed into `messages` directly: history pages from the last seq, so a gap before it would be skipped.
+ */
+interface Outgoing {
+  key: string
+  text: string
+  to: string[]
+  replyTo: string | null
+  createdAt: number
+  sent: Message | null
+  failed: boolean
+}
+const outgoing = ref<Outgoing[]>([])
+let outgoingCount = 0
+/** Row key per message id, so a bubble keeps its key (and its rendered Markdown) when history takes it over. */
+const rowKeys = new Map<string, string>()
+const shownOutgoing = computed(() => outgoing.value.filter(o => !o.sent || !byId.value.has(o.sent.id)))
+watch(byId, (ids) => {
+  outgoing.value = outgoing.value.filter(o => !o.sent || !ids.has(o.sent.id))
+})
+
+/** An outgoing message as the bubble shows it until the server's record is known. */
+function draftMessage(o: Outgoing): Message {
+  return o.sent ?? {
+    id: o.key, seq: Number.MAX_SAFE_INTEGER, conversation: id, title: conversation.value?.title ?? '',
+    from: identity.name.value, to: o.to, replyTo: o.replyTo, text: o.text, createdAt: o.createdAt,
+  }
+}
+
+// Sends go out one at a time, so the server orders them as they were typed
+let sendQueue: Promise<unknown> = Promise.resolve()
+function deliver(o: Outgoing) {
+  o.failed = false
+  sendQueue = sendQueue.then(async () => {
+    try {
+      o.sent = await api.send(id, identity.name.value, o.text, o.to, o.replyTo)
+      rowKeys.set(o.sent.id, o.key)
+      history.refresh()
+    } catch {
+      // Reported by the API wrapper; the bubble offers retry
+      o.failed = true
+    }
+  })
+}
+
+function discard(o: Outgoing) {
+  outgoing.value = outgoing.value.filter(x => x !== o)
+}
 
 /**
  * Read receipts for your own message, counting the agents it asks to answer, or every agent when it names nobody.
@@ -94,7 +205,8 @@ const WORKING_WINDOW_MS = 15 * 60_000
 
 /**
  * Agents that have taken a message asking them to answer and not posted since. The watch script takes a message
- * as soon as it arrives and wakes the agent with it, so having it means working on it.
+ * as soon as it arrives and wakes the agent with it, so having it means working on it. An agent that closed the ask
+ * with `done` chose not to answer, so it isn't waited on.
  */
 const waitingOn = computed(() => {
   const c = conversation.value
@@ -106,7 +218,7 @@ const waitingOn = computed(() => {
       if (m.from === name) return []
       if (m.to.includes(name)) ask = m
     }
-    if (!ask || (c.readSeq[name] ?? 0) < ask.seq) return []
+    if (!ask || (c.readSeq[name] ?? 0) < ask.seq || (c.doneSeq?.[name] ?? 0) >= ask.seq) return []
     const working = participants.value.get(name)?.status === 'live' && Date.now() - ask.createdAt < WORKING_WINDOW_MS
     return [{ name, working }]
   })
@@ -122,25 +234,35 @@ const markdown = computed(() => messageMarkdown(conversation.value?.members ?? [
 const markdownKey = computed(() => `${identity.name.value}|${conversation.value?.members.join(',') ?? ''}`)
 
 /** One bubble per message, with what is needed to group consecutive messages like a messenger app. */
-const rows = computed(() => messages.value.map((m, i) => {
-  const prev = messages.value[i - 1]
-  const next = messages.value[i + 1]
+const rows = computed(() => {
+  const outgoingBy = new Map(shownOutgoing.value.map(o => [o.key, o]))
+  const all = [...messages.value, ...shownOutgoing.value.map(draftMessage)]
+  return all.map((m, i) => toRow(m, all[i - 1], all[i + 1], outgoingBy.get(rowKeys.get(m.id) ?? m.id)))
+})
+
+function toRow(m: Message, prev: Message | undefined, next: Message | undefined, out: Outgoing | undefined) {
   const newDay = !prev || !isSameDay(prev.createdAt, m.createdAt)
   const mine = m.from === identity.name.value
+  const unsent = !!out && !out.sent
   return {
     m,
+    key: rowKeys.get(m.id) ?? m.id,
+    /** Set while the message is yours and history has not returned it yet. */
+    out,
+    /** Not yet accepted by the server, so it has no id to reply to or read receipts. */
+    unsent,
     mine,
     newDay,
     firstOfGroup: newDay || prev?.from !== m.from,
     // Recipients the text does not already @mention, shown above it
     unmentioned: m.to.filter(t => !mentionedIn(m.text, [t]).length),
-    receipt: mine ? receipt(m) : null,
+    receipt: mine && !unsent ? receipt(m) : null,
     lastOfGroup: !next || next.from !== m.from || !isSameDay(next.createdAt, m.createdAt),
     chat: { id: m.id, role: mine ? 'user' as const : 'assistant' as const, parts: [{ type: 'text' as const, text: m.text }] },
   }
-}))
+}
 
-function bubbleUi(row: (typeof rows.value)[number]) {
+function bubbleUi(row: ReturnType<typeof toRow>) {
   return {
     root: 'scroll-mt-20',
     container: [row.lastOfGroup ? 'pb-3' : 'pb-0.5', 'max-w-[85%] md:max-w-[70%]'],
@@ -155,7 +277,6 @@ function bubbleUi(row: (typeof rows.value)[number]) {
 // Composer
 const text = ref('')
 const replyTo = ref<Message | null>(null)
-const sending = ref(false)
 const recipients = computed(() => conversation.value?.members.filter(m => m !== identity.name.value) ?? [])
 const memberLine = computed(() =>
   conversation.value?.members.map(m => m === identity.name.value ? 'You' : m).join(', ') ?? '')
@@ -201,18 +322,24 @@ async function copy(message: Message) {
 }
 onBeforeUnmount(() => clearTimeout(copiedTimer))
 
-async function send() {
+/** Shows the message at once and clears the composer; the server's answer replaces the draft when it comes. */
+function send() {
   if (!text.value.trim()) return
-  sending.value = true
-  try {
+  outgoing.value.push({
+    key: `local-${++outgoingCount}`,
+    text: text.value,
     // Members mentioned as @name are the ones expected to answer
-    const to = mentionedIn(text.value, recipients.value)
-    await api.send(id, identity.name.value, text.value, to, replyTo.value?.id ?? null)
-    text.value = ''
-    replyTo.value = null
-  } finally {
-    sending.value = false
-  }
+    to: mentionedIn(text.value, recipients.value),
+    replyTo: replyTo.value?.id ?? null,
+    createdAt: Date.now(),
+    sent: null,
+    failed: false,
+  })
+  text.value = ''
+  replyTo.value = null
+  pinned = true
+  // The reactive copy, so the bubble follows its state
+  deliver(outgoing.value.at(-1)!)
 }
 
 // Joining without a name yet registers one first, so a person gets in with one step
@@ -233,7 +360,10 @@ async function join() {
   }
 }
 
-function jumpTo(messageId: string) {
+/** Scrolls to a message, loading older pages first when it is above the ones loaded. */
+async function jumpTo(messageId: string) {
+  while (!byId.value.has(messageId) && hasOlder.value) await loadOlder()
+  await nextTick()
   document.querySelector(`[data-message-id="${messageId}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
 
@@ -257,13 +387,19 @@ function firstLine(message: Message) {
                 :subtitle-title="conversation ? `Started by ${conversation.createdBy}, ${formatTime(conversation.createdAt)}` : ''"
                 :ui="{ subtitle: workingLine ? 'text-primary' : '' }" />
 
-    <div ref="scroller" class="flex-1 overflow-y-auto bg-muted chat-wallpaper" @scroll.passive="onScroll">
+    <div ref="scroller" class="flex-1 overflow-y-auto [overflow-anchor:none] bg-muted chat-wallpaper"
+         @scroll.passive="onScroll">
       <div ref="thread" class="max-w-4xl mx-auto px-2 md:px-6 py-4">
-        <p v-if="!messages.length" class="text-center text-sm text-muted py-8">No messages yet.</p>
+        <p v-if="loaded && !messages.length" class="text-center text-sm text-muted py-8">No messages yet.</p>
+        <!-- Always the same height while there is more to load, so the spinner showing doesn't move the messages -->
+        <p v-else-if="hasOlder" class="h-8 flex items-center justify-center">
+          <UIcon name="i-lucide-loader-circle" class="size-4 text-muted animate-spin"
+                 :class="loadingOlder ? '' : 'invisible'" :aria-hidden="!loadingOlder" aria-label="Loading earlier messages" />
+        </p>
 
         <UChatMessages :should-scroll-to-bottom="false" compact
                        :ui="{ root: 'gap-0 px-0', viewport: 'sticky bottom-4 inset-x-0 h-0 z-10', autoScroll: 'bottom-0 shadow' }">
-          <template v-for="row in rows" :key="row.m.id">
+          <template v-for="row in rows" :key="row.key">
             <div v-if="row.newDay" class="flex justify-center my-3">
               <span class="text-xs text-muted bg-default rounded-md px-3 py-1 shadow-xs">
                 {{ formatDay(row.m.createdAt) }}
@@ -271,7 +407,7 @@ function firstLine(message: Message) {
             </div>
 
             <UChatMessage v-bind="row.chat" :data-message-id="row.m.id" :side="row.mine ? 'right' : 'left'"
-                          variant="soft" compact :ui="bubbleUi(row)" @dblclick="onBubbleDblclick($event, row.m)">
+                          variant="soft" compact :ui="bubbleUi(row)" @dblclick="!row.unsent && onBubbleDblclick($event, row.m)">
               <template #content>
                 <p v-if="!row.mine && row.firstOfGroup" class="text-xs font-semibold" :class="nameColor(row.m.from)">
                   {{ row.m.from }}
@@ -293,19 +429,26 @@ function firstLine(message: Message) {
                   <span v-for="t in row.unmentioned" :key="t" class="mr-1.5">@{{ t === identity.name.value ? 'You' : t }}</span>
                 </p>
 
-                <MDC :value="row.m.text" :cache-key="`${row.m.id}|${markdownKey}`" :parser-options="markdown" class="kreteg-md break-words" />
-                <!-- Copy and reply sit on the time line, shown on hover; negative margins keep the line's height -->
+                <MDC :value="row.m.text" :cache-key="`${row.key}|${markdownKey}`" :parser-options="markdown" class="kreteg-md break-words" />
+                <!-- Copy and reply sit on the time line, shown on hover (always on touch screens, which have none); negative
+                     margins keep the line's height -->
                 <div class="flex items-center justify-end gap-1 text-[11px] leading-none text-muted">
-                  <div class="flex -my-1.5 opacity-0 group-hover/message:opacity-100 focus-within:opacity-100">
+                  <div class="flex -my-1.5 opacity-0 group-hover/message:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
                     <UButton :icon="copiedId === row.m.id ? 'i-lucide-check' : 'i-lucide-copy'" size="xs" color="neutral"
                              variant="ghost" class="p-1" :ui="{ leadingIcon: 'size-3.5' }"
                              :aria-label="copiedId === row.m.id ? 'Copied' : 'Copy Markdown'"
                              :title="copiedId === row.m.id ? 'Copied' : 'Copy Markdown'" @click="copy(row.m)" />
-                    <UButton v-if="isMember" icon="i-lucide-reply" size="xs" color="neutral" variant="ghost"
+                    <UButton v-if="isMember && !row.unsent" icon="i-lucide-reply" size="xs" color="neutral" variant="ghost"
                              class="p-1" :ui="{ leadingIcon: 'size-3.5' }"
                              aria-label="Reply" title="Reply (or double-click the message)" @click="reply(row.m)" />
                   </div>
+                  <template v-if="row.out?.failed">
+                    <span class="text-error">Not sent</span>
+                    <UButton label="Retry" size="xs" color="error" variant="link" class="p-0" @click="deliver(row.out)" />
+                    <UButton label="Discard" size="xs" color="neutral" variant="link" class="p-0" @click="discard(row.out)" />
+                  </template>
                   <span :title="formatTime(row.m.createdAt)">{{ formatClock(row.m.createdAt) }}</span>
+                  <UIcon v-if="row.unsent && !row.out?.failed" name="i-lucide-clock" class="size-3" title="Sending…" />
                   <UIcon v-if="row.receipt" :name="row.receipt.read ? 'i-lucide-check-check' : 'i-lucide-check'"
                          :class="['size-3.5', row.receipt.read ? 'text-info' : '']" :title="row.receipt.title" />
                 </div>
@@ -330,7 +473,7 @@ function firstLine(message: Message) {
       </div>
     </div>
 
-    <footer v-if="conversation" class="shrink-0 border-t border-default bg-elevated/40 px-3 py-2">
+    <footer v-if="conversation" class="shrink-0 border-t border-default bg-elevated/40 px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
       <div class="max-w-4xl mx-auto">
         <form v-if="!identity.name.value" class="flex flex-wrap items-center justify-center gap-2 py-1"
               @submit.prevent="join">
@@ -353,9 +496,10 @@ function firstLine(message: Message) {
             <span class="truncate" :class="nameColor(name)">{{ name }}</span>
           </li>
         </ul>
+        <!-- 16px text below md: iOS zooms the page into a smaller input when it gets focus -->
         <UChatPrompt ref="prompt" v-model="text" placeholder="Type a message, @ to mention (Markdown supported)"
-                     variant="subtle" :maxrows="8" :disabled="sending" :submit-on-enter="!mentions.open.value"
-                     class="bg-default" @submit="send"
+                     variant="subtle" :maxrows="8" :submit-on-enter="!mentions.open.value"
+                     :ui="{ base: 'text-base md:text-sm' }" class="bg-default" @submit="send"
                      @input="mentions.onInput" @keydown="mentions.onKeydown" @keyup="mentions.onCaretMove"
                      @click="mentions.onCaretMove" @blur="mentions.close">
           <template v-if="replyTo" #header>
@@ -372,7 +516,7 @@ function firstLine(message: Message) {
           </template>
           <template #footer>
             <span class="text-xs text-muted flex-1">Enter to send, Shift+Enter for a new line</span>
-            <UChatPromptSubmit :loading="sending" :disabled="!text.trim()" class="rounded-full" />
+            <UChatPromptSubmit :disabled="!text.trim()" class="rounded-full" />
           </template>
         </UChatPrompt>
         </div>

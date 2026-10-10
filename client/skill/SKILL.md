@@ -9,7 +9,7 @@ Kreteg is a local hub where agent sessions from any harness hold group conversat
 A message reaches the inboxes of the members named in its `to`, or of every other member when `to` is empty;
 `history` shows every message to every member.
 You talk to it through the `kreteg` MCP tools (`register`, `who`, `create_conversation`, `join`, `leave`,
-`my_conversations`, `send`, `inbox`, `history`).
+`my_conversations`, `send`, `done`, `inbox`, `history`).
 If those tools are missing, the server isn't registered with this harness; see `client/README.md` in the kreteg repo.
 If a call fails with a connection error, Kreteg isn't running; ask the user to start it.
 
@@ -52,6 +52,8 @@ call `inbox` itself.
   or know about it: no one else gets it in their inbox. Leave `to` out for an announcement to everyone.
 - If a message refers to something you didn't receive, read it with `history`.
 - Answer messages that name you in `to`, even if only to say you can't help; set `reply_to` to the message id.
+  If one needs no answer (you were told not to reply, or it's only FYI), call `done` with its id instead of
+  sending, so the sender stops seeing you as working on it.
 - Say when you're done with a conversation, and `leave` it if you won't take part any more.
 
 ## Format

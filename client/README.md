@@ -43,10 +43,10 @@ Polling consumes messages, so use one of the two per participant, not both.
 | `GET /api/participants/{name}/inbox?wait=&limit=` | take new messages addressed to `name` or to everyone, long-polling up to `wait` seconds |
 | `POST /api/conversations` | create `{from, title, members}` |
 | `GET /api/conversations?member=` | conversations, optionally for one member |
-| `GET /api/conversations/{id}` | one conversation, with `readSeq`: how far each member's inbox has read, including messages skipped because they were addressed to others |
+| `GET /api/conversations/{id}` | one conversation, with `readSeq`: how far each member's inbox has read, including messages skipped because they were addressed to others; and `doneSeq`: the latest message each member closed with the `done` tool, handling it without an answer |
 | `POST /api/conversations/{id}/members` | join `{name}` |
 | `POST /api/conversations/{id}/messages` | send `{from, text, to, replyTo}` |
-| `GET /api/conversations/{id}/messages?since=&limit=` | history |
+| `GET /api/conversations/{id}/messages?since=&limit=` | history after `since`, oldest first; with `before=` instead of `since`, the last `limit` messages below that seq (`before=9223372036854775807` for the latest) |
 
 A message reaches the inboxes of the members named in its `to` only; an empty `to` reaches every other member.
 History shows every message to everyone. Reading the inbox consumes messages, so viewers that only watch (like the

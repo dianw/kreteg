@@ -39,7 +39,7 @@ classes, where Quarkus supports only field injection.
 
 | Path | Purpose |
 |---|---|
-| `/mcp` | MCP over Streamable HTTP: the agent contract (`register`, `who`, `create_conversation`, `join`, `leave`, `my_conversations`, `send`, `inbox`, `history`) |
+| `/mcp` | MCP over Streamable HTTP: the agent contract (`register`, `who`, `create_conversation`, `join`, `leave`, `my_conversations`, `send`, `done`, `inbox`, `history`) |
 | `/api/...` | REST for the inbox watch loop, scripts and the UI; see [client/README.md](client/README.md) |
 | `GET /` | Static UI from the `kreteg-ui` jar (`META-INF/resources`); other page paths fall back to `index.html` (`core.web.SpaFallback`) |
 

@@ -83,11 +83,73 @@ class ConversationToolsTest {
     }
 
     @Test
+    void doneClosesAnAskWithoutAnAnswer() {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        String alice = "alice-" + suffix;
+        String bob = "bob-" + suffix;
+        String carol = "carol-" + suffix;
+        McpStreamableTestClient client = McpAssured.newConnectedStreamableClient();
+        String[] ids = new String[3];
+
+        client.when()
+                .toolsCall("register", Map.of("me", alice), r -> assertThat(r.isError()).isFalse())
+                .toolsCall("register", Map.of("me", bob), r -> assertThat(r.isError()).isFalse())
+                .toolsCall("register", Map.of("me", carol), r -> assertThat(r.isError()).isFalse())
+                .thenAssertResults();
+        client.when()
+                .toolsCall("create_conversation", Map.of("me", alice, "title", "fyi", "members", List.of(bob)),
+                        r -> ids[0] = object(r).getString("id"))
+                .thenAssertResults();
+        client.when()
+                .toolsCall("send", Map.of("me", alice, "conversation", ids[0], "text", "first", "to", List.of(bob)),
+                        r -> ids[1] = object(r).getString("id"))
+                .thenAssertResults();
+        client.when()
+                .toolsCall("send", Map.of("me", alice, "conversation", ids[0], "text", "no need to reply",
+                        "to", List.of(bob)), r -> ids[2] = object(r).getString("id"))
+                .thenAssertResults();
+
+        client.when()
+                .toolsCall("done", Map.of("me", bob, "conversation", ids[0], "message", ids[2]),
+                        r -> assertThat(r.isError()).isFalse())
+                .thenAssertResults();
+        // Closing an older ask afterwards keeps the newer mark
+        client.when()
+                .toolsCall("done", Map.of("me", bob, "conversation", ids[0], "message", ids[1]),
+                        r -> assertThat(r.isError()).isFalse())
+                .thenAssertResults();
+
+        List<Map<String, Object>> history = RestAssured.given()
+                .when().get("/api/conversations/{id}/messages", ids[0])
+                .then().statusCode(200)
+                .extract().jsonPath().getList("$");
+        // done posts nothing
+        assertThat(history).hasSize(2);
+        long askSeq = ((Number) history.get(1).get("seq")).longValue();
+        Map<String, Long> doneSeq = RestAssured.given()
+                .when().get("/api/conversations/{id}", ids[0])
+                .then().statusCode(200)
+                .extract().jsonPath().getMap("doneSeq", String.class, Long.class);
+        assertThat(doneSeq).containsEntry(bob, askSeq).containsEntry(alice, 0L);
+
+        client.when()
+                .toolsCall("done", Map.of("me", bob, "conversation", ids[0], "message", "m-missing"), r -> {
+                    assertThat(r.isError()).isTrue();
+                    assertThat(r.firstContent().asText().text()).contains("No message m-missing");
+                })
+                .toolsCall("done", Map.of("me", carol, "conversation", ids[0], "message", ids[2]), r -> {
+                    assertThat(r.isError()).isTrue();
+                    assertThat(r.firstContent().asText().text()).contains("is not a member");
+                })
+                .thenAssertResults();
+    }
+
+    @Test
     void listsAllTools() {
         McpAssured.newConnectedStreamableClient().when()
                 .toolsList(page -> assertThat(page.tools().stream().map(McpAssured.ToolInfo::name))
                         .containsExactlyInAnyOrder("register", "who", "create_conversation", "join", "leave",
-                                "my_conversations", "send", "inbox", "history"))
+                                "my_conversations", "send", "done", "inbox", "history"))
                 .thenAssertResults();
     }
 

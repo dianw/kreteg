@@ -1,5 +1,7 @@
 package io.kreteg.conversation;
 
+import static io.kreteg.conversation.ConversationException.Reason.INVALID;
+
 import java.util.List;
 
 import jakarta.inject.Inject;
@@ -101,12 +103,23 @@ public class ConversationResource {
         return service.send(request.from(), id, request.text(), request.to(), request.replyTo());
     }
 
+    /**
+     * Messages after {@code since} (default 0), or with {@code before} instead, the last ones below that seq; both are
+     * returned oldest first. Open a conversation at its end with {@code before=9223372036854775807}.
+     */
     @GET
     @Path("/conversations/{id}/messages")
     public List<Message> history(@PathParam("id") String id,
-                                 @QueryParam("since") @DefaultValue("0") long since,
+                                 @QueryParam("since") Long since,
+                                 @QueryParam("before") Long before,
                                  @QueryParam("limit") @DefaultValue("100") int limit) {
-        return service.history(id, since, limit);
+        if (before == null) {
+            return service.history(id, since == null ? 0 : since, limit);
+        }
+        if (since != null) {
+            throw new ConversationException(INVALID, "Use either since or before, not both");
+        }
+        return service.historyBefore(id, before, limit);
     }
 
     @ServerExceptionMapper

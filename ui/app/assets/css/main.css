@@ -16,6 +16,8 @@
 .kreteg-md pre { max-width: 100%; overflow-x: auto; font-size: 0.8rem; }
 .kreteg-md table { display: block; max-width: 100%; overflow-x: auto; }
 .kreteg-md :is(p, li) { line-height: 1.45; }
+/* Long ids and URLs in inline code would otherwise push past the bubble on narrow screens */
+.kreteg-md :not(pre) > code { overflow-wrap: anywhere; }
 
 /* @name mentions in message text; your own name stands out more, as in a messenger */
 .kreteg-mention { color: var(--ui-primary); font-weight: 500; }

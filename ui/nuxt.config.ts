@@ -16,7 +16,11 @@ export default defineNuxtConfig({
     },
   },
   app: {
-    head: { title: 'Kreteg' },
+    head: {
+      title: 'Kreteg',
+      // viewport-fit=cover lets the bottom bar and composer pad themselves clear of the home indicator
+      viewport: 'width=device-width, initial-scale=1, viewport-fit=cover',
+    },
   },
   icon: {
     // A client-only app has no icon server, so unbundled icons are fetched from the public Iconify API. Bundle the
