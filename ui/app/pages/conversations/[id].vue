@@ -14,7 +14,7 @@ const isMember = computed(() => !!identity.name.value && !!conversation.value?.m
 const scroller = useTemplateRef<HTMLElement>('scroller')
 
 // Members and read positions change while the conversation is open, so they are polled as often as the messages
-usePolling(async () => {
+const { refresh: refreshConversation } = usePolling(async () => {
   conversation.value = await api.conversation(id)
   notFound.value = !conversation.value
 }, 2000)
@@ -60,10 +60,14 @@ function holdAnchor() {
 }
 
 // Whether the view follows the newest message: true while the reader is at the bottom. Bubbles keep growing after
-// they are added, so the view is moved down whenever the thread changes size.
+// they are added, so the view is moved down whenever the thread changes size. Only scrolling up lets go: the scroll
+// event of our own move to the bottom can arrive after the thread has grown again, when it is no longer near it.
 let pinned = true
+let lastScrollTop = 0
 function onScroll() {
-  pinned = nearBottom()
+  const top = scroller.value?.scrollTop ?? 0
+  if (top < lastScrollTop || nearBottom()) pinned = nearBottom()
+  lastScrollTop = top
   if (anchor) anchor.top = offsetOf(anchor.id) ?? anchor.top
   maybeLoadOlder()
 }
@@ -78,6 +82,8 @@ watch(thread, (el) => {
     else holdAnchor()
   })
   resizes.observe(el)
+  // The view itself shrinks too, e.g. when the composer appears below it
+  if (scroller.value) resizes.observe(scroller.value)
 })
 onBeforeUnmount(() => resizes?.disconnect())
 
@@ -385,7 +391,12 @@ function firstLine(message: Message) {
   <template v-else>
     <PaneHeader back="/conversations" :title="conversation?.title ?? '…'" :subtitle="workingLine || memberLine"
                 :subtitle-title="conversation ? `Started by ${conversation.createdBy}, ${formatTime(conversation.createdAt)}` : ''"
-                :ui="{ subtitle: workingLine ? 'text-primary' : '' }" />
+                :ui="{ subtitle: workingLine ? 'text-primary' : '' }">
+      <template v-if="conversation" #actions>
+        <MembersControl :conversation="conversation" :participants="participants" :can-add="isMember"
+                        @added="refreshConversation" />
+      </template>
+    </PaneHeader>
 
     <div ref="scroller" class="flex-1 overflow-y-auto [overflow-anchor:none] bg-muted chat-wallpaper"
          @scroll.passive="onScroll">
