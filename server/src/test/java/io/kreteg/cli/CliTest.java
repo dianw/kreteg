@@ -7,9 +7,12 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -213,6 +216,70 @@ class CliTest {
             watcher.join(TimeUnit.SECONDS.toMillis(10));
         }
         assertThat(watcher.isAlive()).isFalse();
+    }
+
+    @Test
+    void watchOnceOutlastsEmptyPollsAndExitsAfterTheFirstMessages() throws Exception {
+        String conversation = create(alice, "once", bob);
+        StringWriter out = new StringWriter();
+        int[] code = {-1};
+        // Polls of one second, so the watcher has come back empty a few times before the message arrives
+        Thread watcher = new Thread(() -> code[0] = Cli.run(url.toString(), new ByteArrayInputStream(new byte[0]),
+                new PrintWriter(out), new PrintWriter(new StringWriter()), "watch", "--once", bob, "1"));
+        watcher.start();
+        TimeUnit.MILLISECONDS.sleep(2500);
+        assertThat(watcher.isAlive()).isTrue();
+
+        pipe("wake up", "send", "--from", alice, "--to", bob, conversation);
+        watcher.join(TimeUnit.SECONDS.toMillis(10));
+
+        assertThat(watcher.isAlive()).isFalse();
+        assertThat(code[0]).isZero();
+        // Only the messages on stdout: the startup line goes to stderr with --once
+        assertThat(out.toString()).startsWith("[kreteg] " + conversation + " \"once\" | m-")
+                .endsWith(" to " + bob + "\nwake up\n\n");
+    }
+
+    @Test
+    void guidePrintsTheSkillWithItsReferencesWithoutAHub() {
+        Result guide = runAt("http://127.0.0.1:1", "", "guide");
+
+        assertThat(guide.code()).isZero();
+        assertThat(guide.out()).startsWith("# Kreteg conversations\n")
+                .doesNotContain("name: kreteg")
+                .contains("## Listen", "kreteg watch --once NAME", "# Kreteg in Claude Code", "Monitor({");
+    }
+
+    @Test
+    void guideWritesTheSkillDirectory() throws Exception {
+        Path dir = Files.createTempDirectory("kreteg-skill");
+        Files.createDirectories(dir.resolve("references"));
+        Files.writeString(dir.resolve("references/dropped.md"), "from an older release");
+
+        Result written = runAt("http://127.0.0.1:1", "", "guide", "--write-skill", dir.toString());
+
+        assertThat(written.code()).isZero();
+        Path source = Path.of("..", "client", "skill");
+        assertThat(dir.resolve("SKILL.md")).hasSameTextualContentAs(source.resolve("SKILL.md"));
+        try (Stream<Path> references = Files.list(source.resolve("references"))) {
+            assertThat(references).isNotEmpty().allSatisfy(reference ->
+                    assertThat(dir.resolve("references").resolve(reference.getFileName()))
+                            .hasSameTextualContentAs(reference));
+        }
+        assertThat(dir.resolve("references/dropped.md")).doesNotExist();
+        assertThat(dir.resolve("SKILL.md.new")).doesNotExist();
+    }
+
+    @Test
+    void everyReferenceFileIsLinkedFromTheSkill() throws Exception {
+        // Skill finds its references through these links, since a native image can't list a resource directory
+        Path source = Path.of("..", "client", "skill");
+        String main = Files.readString(source.resolve("SKILL.md"));
+        try (Stream<Path> references = Files.list(source.resolve("references"))) {
+            assertThat(references.map(path -> "references/" + path.getFileName()))
+                    .isNotEmpty()
+                    .allSatisfy(reference -> assertThat(main).contains("(" + reference + ")"));
+        }
     }
 
     private static void awaitOutput(StringWriter out, String expected) throws InterruptedException {

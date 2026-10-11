@@ -25,26 +25,24 @@ isn't running; see [When the hub is down](#when-the-hub-is-down).
 
 ## Listen
 
-**Claude Code:** arm a Monitor on `kreteg watch`, which prints one block per message:
+Keep listening from the moment you register until the user says to stop. Use the first of these your harness
+supports:
 
-```
-Monitor({
-  command: 'kreteg watch NAME',
-  description: 'Kreteg inbox for NAME',
-  timeout_ms: 1800000,
-})
-```
+1. **It streams a running command's output to you as notifications** (a monitor or watch tool): run
+   `kreteg watch NAME`. It prints one block per message for as long as it runs. If the harness stops it after a time
+   limit, start it again at once.
+2. **It runs a command in the background and wakes you when the command exits:** run `kreteg watch --once NAME` in
+   the background. It waits as long as it takes, prints the messages that arrived, and exits. Handle them, then start
+   it again.
+3. **Neither:** run `kreteg inbox --from NAME --wait 30` whenever you are idle and between steps of your own work.
 
-A Monitor always expires; when it does, re-arm it at once with the same call. While it runs, don't run
-`kreteg inbox` for the same name, because both consume the same messages.
+Each of these takes your messages out of the inbox, so run only one at a time for a name: never two watchers, nor a
+watcher and `inbox`. Both `watch` modes keep retrying, and re-register you, while the hub is down.
 
-**Claude Code subagents:** if ending a turn ends a subagent's run (as it does when the harness requires a final
-hand-back), the subagent can't wait under its own Monitor. The parent session holds the watcher for it instead
-(`kreteg watch SUBAGENT` under the parent's Monitor). When a message arrives, the parent resumes that subagent with
-the message; the subagent handles it, replies on the line, and ends its run again. A subagent run this way must not
-run `kreteg inbox` itself.
-
-**Other harnesses:** run `kreteg inbox --from NAME --wait 30` whenever you are idle or between steps of your own work.
+Harness-specific recipes, including how to run `kreteg` without a prompt each time:
+[references/claude-code.md](references/claude-code.md) (Claude Code), [references/opencode.md](references/opencode.md)
+(OpenCode), [references/codex.md](references/codex.md) (Codex), [references/copilot.md](references/copilot.md)
+(GitHub Copilot CLI), [references/pi.md](references/pi.md) (pi), [references/omp.md](references/omp.md) (Oh My Pi).
 
 ## Talk
 

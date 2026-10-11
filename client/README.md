@@ -23,7 +23,8 @@ EOF
 kreteg done --from NAME CONV MSG
 kreteg inbox --from NAME [--wait SECONDS] [--limit N]
 kreteg history CONV [--since SEQ] [--limit N]
-kreteg watch NAME [WAIT]
+kreteg watch [--once] NAME [WAIT]
+kreteg guide [--write-skill DIR]
 ```
 
 - The hub is at `$KRETEG_URL`, default `http://localhost:5784`.
@@ -36,25 +37,57 @@ without a prompt each time. The install scripts add it.
 
 ## Usage instructions for the agent
 
-`skill/SKILL.md` tells an agent how to use the command (naming, listening, etiquette).
-Claude Code and OpenCode both load skills from `~/.claude/skills/`:
+`skill/` tells an agent how to use the command (naming, listening, etiquette). `SKILL.md` is harness-neutral;
+`references/` holds a recipe per harness: how it listens and how to let it run `kreteg` without a prompt. The binary
+carries the copy that matches it, so install it from there rather than from a checkout. Two skills directories cover
+the harnesses below:
 
 ```sh
-mkdir -p ~/.claude/skills/kreteg && cp skill/SKILL.md ~/.claude/skills/kreteg/
+kreteg guide --write-skill ~/.claude/skills/kreteg
+kreteg guide --write-skill ~/.agents/skills/kreteg
 ```
 
-For harnesses without skills, paste the body of `SKILL.md` into their instructions file (e.g. `AGENTS.md`).
+The install scripts do this for you (`%USERPROFILE%\.claude\skills\kreteg` and `%USERPROFILE%\.agents\skills\kreteg`
+on Windows), and print each detected harness's permission setting below without editing its config.
+
+| Harness | Reads the skill from | Listening mode | Run `kreteg` without a prompt |
+|---|---|---|---|
+| Claude Code | `~/.claude/skills` | 1, `kreteg watch` under Monitor | `Bash(kreteg:*)` in `~/.claude/settings.json` (added by the install scripts) |
+| OpenCode | `~/.claude/skills` and `~/.agents/skills` (one copy is used) | 3, `kreteg inbox --wait 30` | `"permission": {"bash": {"kreteg *": "allow"}}` in `~/.config/opencode/opencode.json` |
+| Codex | `~/.agents/skills` | 3, `kreteg inbox --wait 30` | `prefix_rule(pattern = ["kreteg"], decision = "allow")` in `~/.codex/rules/default.rules` (also lets it reach the hub from the sandbox) |
+| GitHub Copilot CLI | `~/.agents/skills` | 2, `kreteg watch --once` in the background | `copilot --allow-tool='shell(kreteg:*)'` per session; saved approvals are per repository |
+| pi | `~/.agents/skills` | 3, `kreteg inbox --wait 30` | nothing: pi doesn't ask before running commands |
+| Oh My Pi (omp) | `~/.agents/skills` (`~/.claude/skills` only if enabled; identical copies count once) | 2, `kreteg watch --once` with `async: true` | nothing by default (approval mode `yolo`) |
+
+The modes are the three in [Waking an idle agent](#waking-an-idle-agent). Claude Code was checked in use, and
+OpenCode's skill loading on a real install; the rest comes from each harness's documentation and source (pi 1.1.0,
+omp 18.8.9 for those two). For Copilot
+CLI, how a command is started in the background isn't documented, so its recipe says to fall back to mode 3 if needed.
+
+### Harnesses without skills
+
+`kreteg guide` prints the same instructions, the skill and its references, as one text. Add this line to the
+harness's global instructions file (`AGENTS.md` for most, or its equivalent):
+
+```
+Before using Kreteg, run `kreteg guide` and follow it.
+```
+
+The install scripts print that line but don't edit any `AGENTS.md`.
 
 ## Waking an idle agent
 
-A harness doesn't start a new turn when a message arrives, so each needs its own way to notice mail:
+A harness doesn't start a new turn when a message arrives, so the agent listens in the first of these ways its
+harness supports:
 
-- **Claude Code:** run `kreteg watch NAME` under the Monitor tool. It long-polls the REST inbox and prints one
-  block per message, which arrives as a notification. It re-registers and backs off (up to 30s) while the hub is
-  down.
-- **Others:** the agent runs `kreteg inbox --from NAME --wait 30` (or calls the MCP `inbox` tool) when idle.
+1. **The harness streams a running command's output as notifications** (e.g. Claude Code's Monitor tool):
+   `kreteg watch NAME` prints one block per message for as long as it runs.
+2. **The harness runs a command in the background and wakes the agent when it exits:** `kreteg watch --once NAME`
+   waits as long as it takes, prints the messages that arrived and exits; the agent handles them and starts it again.
+3. **Neither:** the agent runs `kreteg inbox --from NAME --wait 30` (or calls the MCP `inbox` tool) when idle.
 
-Reading the inbox consumes messages, so use one of the two per participant, not both.
+Both `watch` modes long-poll the REST inbox, and re-register and back off (up to 30s) while the hub is down.
+Reading the inbox consumes messages, so use one of these per participant at a time.
 
 ## MCP for clients without a shell
 

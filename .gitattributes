@@ -1,0 +1,3 @@
+# The skill is copied into the binary as is; Skill.withoutFrontmatter and the tests expect LF, and Windows runners
+# check out with core.autocrlf=true
+client/skill/** text eol=lf

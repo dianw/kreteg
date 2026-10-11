@@ -17,7 +17,7 @@ function Uninstall-Kreteg {
   $binDir = if ($env:KRETEG_BIN_DIR) { $env:KRETEG_BIN_DIR } else { Join-Path $env:LOCALAPPDATA 'Programs\kreteg' }
   $dataDir = Join-Path $env:LOCALAPPDATA 'kreteg'
   $exe = Join-Path $binDir 'kreteg.exe'
-  $skillDir = Join-Path $HOME '.claude\skills\kreteg'
+  $skillDirs = (Join-Path $HOME '.claude\skills\kreteg'), (Join-Path $HOME '.agents\skills\kreteg')
 
   if (Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue) {
     Stop-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
@@ -37,7 +37,9 @@ function Uninstall-Kreteg {
     [Environment]::SetEnvironmentVariable('Path', (($userPath -split ';') | Where-Object { $_ -and $_ -ne $binDir }) -join ';', 'User')
     Say "removed $binDir from your PATH"
   }
-  if (Test-Path $skillDir) { Remove-Item -Recurse -Force $skillDir; Say "removed $skillDir" }
+  foreach ($dir in $skillDirs) {
+    if (Test-Path $dir) { Remove-Item -Recurse -Force $dir; Say "removed $dir" }
+  }
   # Undo install.ps1's permission rule, with the same care: never a link or a file that isn't a JSON object
   $settings = Join-Path $HOME '.claude\settings.json'
   $rule = 'Bash(kreteg:*)'

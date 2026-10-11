@@ -47,11 +47,12 @@ remove_allow_rule() {
 main() {
   bin_dir="${KRETEG_BIN_DIR:-$HOME/.local/bin}"
   data_dir="${XDG_DATA_HOME:-$HOME/.local/share}/kreteg"
-  skill_dir="$HOME/.claude/skills/kreteg"
 
   remove_service
   if [ -f "$bin_dir/kreteg" ]; then rm -f "$bin_dir/kreteg"; say "removed $bin_dir/kreteg"; fi
-  if [ -d "$skill_dir" ]; then rm -rf "$skill_dir"; say "removed $skill_dir"; fi
+  for dir in "$HOME/.claude/skills/kreteg" "$HOME/.agents/skills/kreteg"; do
+    if [ -d "$dir" ]; then rm -rf "$dir"; say "removed $dir"; fi
+  done
   remove_allow_rule
   if has claude && claude mcp remove --scope user kreteg >/dev/null 2>&1; then
     say "removed the kreteg MCP server from Claude Code"

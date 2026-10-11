@@ -83,9 +83,9 @@ jobs:
           pattern: kreteg-*
           path: dist
           merge-multiple: true
-      - name: Add client files, install scripts and checksums
+      # The skill isn't a separate asset: the binary carries it and the installers write it with 'kreteg guide'
+      - name: Add install scripts and checksums
         run: |
-          cp client/skill/SKILL.md dist/
           # @VERSION@ is the scripts' default release; an unstamped copy (from a checkout) installs the latest one
           for f in install/install.sh install/uninstall.sh install/install.ps1 install/uninstall.ps1; do
             sed "s/@VERSION@/$GITHUB_REF_NAME/g" "$f" > "dist/$(basename "$f")"

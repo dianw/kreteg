@@ -1,5 +1,5 @@
 # Install Kreteg on Windows for the current user: the binary (hub and command-line client in one), a background task
-# started at logon, the agent skill, and a Claude Code permission rule for the client. Needs no administrator rights.
+# started at logon, the agent skill (written by the binary), and a Claude Code permission rule for the client. Needs no administrator rights.
 # Re-run it to upgrade. Works in Windows PowerShell 5.1 and PowerShell 7.
 #
 #   irm https://github.com/dianw/kreteg/releases/latest/download/install.ps1 | iex
@@ -68,15 +68,11 @@ function Install-Kreteg {
     if (-not $sums.ContainsKey('install.ps1')) {
       Die "release $version predates the kreteg command (0.3.0); install v0.3.0 or later"
     }
-    foreach ($f in $asset, 'SKILL.md') {
-      try { Invoke-WebRequest -UseBasicParsing -Uri "$base/$f" -OutFile (Join-Path $tmp $f) }
-      catch { Die "cannot download $base/$f" }
-    }
-    foreach ($f in $asset, 'SKILL.md') {
-      if (-not $sums.ContainsKey($f)) { Die "$f is missing from SHA256SUMS" }
-      $actual = (Get-FileHash -Algorithm SHA256 (Join-Path $tmp $f)).Hash
-      if ($actual -ne $sums[$f]) { Die "checksum mismatch for $f" }  # -ne ignores case
-    }
+    try { Invoke-WebRequest -UseBasicParsing -Uri "$base/$asset" -OutFile (Join-Path $tmp $asset) }
+    catch { Die "cannot download $base/$asset" }
+    if (-not $sums.ContainsKey($asset)) { Die "$asset is missing from SHA256SUMS" }
+    $actual = (Get-FileHash -Algorithm SHA256 (Join-Path $tmp $asset)).Hash
+    if ($actual -ne $sums[$asset]) { Die "checksum mismatch for $asset" }  # -ne ignores case
 
     # --- stop a running server: Windows cannot replace an executable that is running
     if (-not $noService) {
@@ -150,10 +146,14 @@ cd /d "$dataDir"
       else { Warn "server did not answer on port $port within 15s; check $log" }
     }
 
-    # --- skill
+    # --- skill: the binary carries the one that matches it (SKILL.md and references\), as 'kreteg guide' prints it
+    # ~\.claude\skills is read by Claude Code (and OpenCode); ~\.agents\skills by Codex, Copilot CLI and OpenCode.
+    # Real copies, not links (those need Developer Mode): --write-skill replaces files atomically and prunes stale ones.
+    foreach ($dir in (Join-Path $HOME '.claude\skills\kreteg'), (Join-Path $HOME '.agents\skills\kreteg')) {
+      if (-not (Invoke-Native { & $exe guide --write-skill $dir })) { Die "could not write the skill to $dir" }
+      Say "installed skill in $dir"
+    }
     $skillDir = Join-Path $HOME '.claude\skills\kreteg'
-    New-Item -ItemType Directory -Force $skillDir | Out-Null
-    Copy-Item -Force (Join-Path $tmp 'SKILL.md') $skillDir
     # The bash + curl + jq watch script was replaced by 'kreteg watch' in 0.3.0. Sessions that loaded the old skill
     # re-arm their watch with its path (Claude Code runs it in Git Bash), so on upgrade it becomes a stand-in for the
     # new command instead of vanishing. LF line endings: a CR after the shebang breaks it. Written to a new file and
@@ -167,7 +167,7 @@ cd /d "$dataDir"
       [IO.File]::WriteAllText("$watch.new", $shim, (New-Object Text.UTF8Encoding $false))
       Move-Item -Force "$watch.new" $watch
     }
-    Say "installed skill in $skillDir"
+    Say 'harnesses without skills: add this line to their global AGENTS.md: Before using Kreteg, run `kreteg guide` and follow it.'
 
     # --- Claude Code permission rule, so agents can run the client without a prompt for every message
     $settings = Join-Path $HOME '.claude\settings.json'
@@ -214,6 +214,18 @@ cd /d "$dataDir"
           }
         }
       }
+    }
+
+    # --- how to let each other harness found here run kreteg without a prompt; their configs are theirs to edit
+    if (Has opencode) {
+      Say "OpenCode: to run kreteg without asking, add `"permission`": {`"bash`": {`"kreteg *`": `"allow`"}} to ~\.config\opencode\opencode.json"
+    }
+    if (Has codex) {
+      Say ("Codex: to run kreteg without asking (and outside its sandbox, to reach the hub), add " +
+        "prefix_rule(pattern = [`"kreteg`"], decision = `"allow`") to ~\.codex\rules\default.rules")
+    }
+    if (Has copilot) {
+      Say "Copilot CLI: to run kreteg without asking, start it with: copilot --allow-tool='shell(kreteg:*)'"
     }
 
     # --- MCP registration, for clients without a shell

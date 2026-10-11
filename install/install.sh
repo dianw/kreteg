@@ -1,6 +1,6 @@
 #!/bin/sh
 # Install Kreteg for the current user: the binary (hub and command-line client in one), a background service, the
-# agent skill, and a Claude Code permission rule for the client. Needs no administrator rights. Re-run it to upgrade.
+# agent skill (written by the binary), and a Claude Code permission rule for the client. Needs no administrator rights. Re-run it to upgrade.
 #
 #   curl -fsSL https://github.com/dianw/kreteg/releases/latest/download/install.sh | sh
 #
@@ -58,14 +58,10 @@ download() {
   # They are recognised by name, without running the binary: a 0.2.0 binary given any argument starts a hub.
   awk '$2 == "install.sh" || $2 == "*install.sh" { found = 1 } END { exit !found }' "$tmp/SHA256SUMS" ||
     die "release $version predates the kreteg command (0.3.0); install v0.3.0 or later"
-  for f in "$asset" SKILL.md; do
-    curl -fsSL -o "$tmp/$f" "$base/$f" || die "cannot download $base/$f"
-  done
-  for f in "$asset" SKILL.md; do
-    expected=$(awk -v f="$f" '$2 == f || $2 == "*" f { print $1 }' "$tmp/SHA256SUMS")
-    [ -n "$expected" ] || die "$f is missing from SHA256SUMS"
-    [ "$(sha256 "$tmp/$f")" = "$expected" ] || die "checksum mismatch for $f"
-  done
+  curl -fsSL -o "$tmp/$asset" "$base/$asset" || die "cannot download $base/$asset"
+  expected=$(awk -v f="$asset" '$2 == f || $2 == "*" f { print $1 }' "$tmp/SHA256SUMS")
+  [ -n "$expected" ] || die "$asset is missing from SHA256SUMS"
+  [ "$(sha256 "$tmp/$asset")" = "$expected" ] || die "checksum mismatch for $asset"
 }
 
 stop_service() {
@@ -159,9 +155,14 @@ wait_until_up() {
 }
 
 install_skill() {
+  # The binary carries the skill that matches it (SKILL.md and references/), the same text 'kreteg guide' prints.
+  # ~/.claude/skills is read by Claude Code (and OpenCode); ~/.agents/skills by Codex, Copilot CLI and OpenCode.
+  # Real copies, not links: --write-skill replaces each file atomically and prunes stale ones.
+  for dir in "$HOME/.claude/skills/kreteg" "$HOME/.agents/skills/kreteg"; do
+    "$bin_dir/kreteg" guide --write-skill "$dir" >/dev/null || die "could not write the skill to $dir"
+    say "installed skill in $dir"
+  done
   skill_dir="$HOME/.claude/skills/kreteg"
-  mkdir -p "$skill_dir"
-  cp "$tmp/SKILL.md" "$skill_dir/SKILL.md"
   # The bash + curl + jq watch script was replaced by 'kreteg watch' in 0.3.0. Sessions that loaded the old skill
   # re-arm their watch with its path, so on upgrade it becomes a stand-in for the new command instead of vanishing.
   # A new file moved into place: a running copy keeps its inode (bash reads scripts while running them), and a
@@ -175,7 +176,7 @@ EOF
     chmod 755 "$skill_dir/kreteg-watch.new"
     mv -f "$skill_dir/kreteg-watch.new" "$skill_dir/kreteg-watch"
   fi
-  say "installed skill in $skill_dir"
+  say "harnesses without skills: add this line to their global AGENTS.md: Before using Kreteg, run \`kreteg guide\` and follow it."
 }
 
 # Lets Claude Code agents run the client without a permission prompt for every message
@@ -210,6 +211,20 @@ allow_cli() {
     rm -f "$new"
     warn "could not update $settings"
     say "$hint"
+  fi
+}
+
+# How to let each other harness found here run kreteg without a prompt; their configs are theirs to edit
+harness_hints() {
+  if has opencode; then
+    say "OpenCode: to run kreteg without asking, add \"permission\": {\"bash\": {\"kreteg *\": \"allow\"}} to ~/.config/opencode/opencode.json"
+  fi
+  if has codex; then
+    say "Codex: to run kreteg without asking (and outside its sandbox, to reach the hub), add" \
+      "prefix_rule(pattern = [\"kreteg\"], decision = \"allow\") to ~/.codex/rules/default.rules"
+  fi
+  if has copilot; then
+    say "Copilot CLI: to run kreteg without asking, start it with: copilot --allow-tool='shell(kreteg:*)'"
   fi
 }
 
@@ -251,6 +266,7 @@ main() {
   fi
   install_skill
   allow_cli
+  harness_hints
   if [ "${KRETEG_MCP:-0}" = 1 ]; then
     register_mcp
   else

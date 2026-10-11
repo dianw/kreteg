@@ -16,7 +16,7 @@ kreteg/
 ├── .github/workflows/
 │   ├── ci.yml     # PRs and main: JVM tests, test report, JaCoCo coverage comment
 │   └── release.yml  # v* tags: native binaries per OS/CPU, published as a GitHub Release
-├── client/        # harness setup and the agent skill
+├── client/        # harness setup, and the agent skill (skill/: SKILL.md, references/), built into the binary
 ├── ui/            # Nuxt SPA, built to static files and packaged as the kreteg-ui jar
 └── server/        # Quarkus app: MCP endpoint, REST API, CLI; serves the kreteg-ui jar
 ```
@@ -29,7 +29,7 @@ Top-level packages under `io.kreteg` follow business functions, so each can late
 |---|---|
 | `conversation` | Participants, conversations, message log and inboxes; MCP tools and REST API over them |
 | `core` | Infrastructure that belongs to no business function (e.g. the shared `Jdbi`) |
-| `cli` | The client subcommands (`kreteg send`, `kreteg watch`, ...): picocli over the REST API, no CDI |
+| `cli` | The client subcommands (`kreteg send`, `kreteg watch`, `kreteg guide`, ...): picocli over the REST API, no CDI |
 
 Business packages must not import each other; they share only `core`. `cli` is a client like any other and imports
 neither: it knows the server only through HTTP and JSON.
@@ -39,6 +39,14 @@ argument starting with `-D` run the hub; anything else runs `cli.Cli`, so client
 the port. The service units installed by the install scripts run `kreteg serve`. Picocli's reflection config for the
 native image comes from the `picocli-codegen` annotation processor, not from `quarkus-picocli`, which would boot the
 whole app for every command.
+
+`client/skill/` is the one source of the agent skill. `server/pom.xml` copies it into the binary
+(`io/kreteg/cli/skill`, listed in `quarkus.native.resources.includes`), where `kreteg guide` prints it and
+`kreteg guide --write-skill DIR` writes it for the installers, into `~/.claude/skills/kreteg` (Claude Code, OpenCode)
+and `~/.agents/skills/kreteg` (Codex, Copilot CLI, OpenCode, pi, omp). `references/` has one recipe per harness, linked from
+`SKILL.md`; see the harness table in [client/README.md](client/README.md). A native image can't list a resource directory, so
+`cli.Skill` finds the reference files through the links in `SKILL.md`; a new file in `references/` needs a link there,
+which `CliTest` checks.
 
 Dependency injection is constructor-only: dependencies are `private final` fields set by a single `@Inject`
 constructor, and config values are `@ConfigProperty` constructor parameters. The one exception is `@QuarkusTest`
@@ -99,7 +107,7 @@ never the inbox, which would consume an agent's messages. The name a person post
 
 GraalVM cannot cross-compile, so `release.yml` builds each binary on its own runner (Linux amd64/arm64, macOS
 arm64/amd64, Windows amd64) and runs the native ITs there. Pushing a `v*` tag publishes a GitHub Release with the
-binaries, `SKILL.md`, the four scripts from `install/` and `SHA256SUMS`; a tag containing `-` (e.g. `v0.1.0-rc.1`)
+binaries, the four scripts from `install/` and `SHA256SUMS`; a tag containing `-` (e.g. `v0.1.0-rc.1`)
 becomes a pre-release, which `latest` skips. Run the workflow manually to build without releasing.
 
 The published scripts have the tag stamped over their `@VERSION@` placeholder, so each release's installer downloads

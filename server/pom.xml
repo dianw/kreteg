@@ -95,6 +95,11 @@
                 <directory>src/main/resources-filtered</directory>
                 <filtering>true</filtering>
             </resource>
+            <!-- The agent skill, printed by 'kreteg guide' and written by the installers; client/skill is its source -->
+            <resource>
+                <directory>${project.basedir}/../client/skill</directory>
+                <targetPath>io/kreteg/cli/skill</targetPath>
+            </resource>
         </resources>
         <plugins>
             <plugin>

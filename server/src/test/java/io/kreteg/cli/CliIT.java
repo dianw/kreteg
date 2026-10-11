@@ -60,10 +60,14 @@ class CliIT {
     }
 
     @Test
-    void versionAndUsageErrorsWithoutAHub() throws Exception {
+    void versionGuideAndUsageErrorsWithoutAHub() throws Exception {
         Result version = kreteg("", "--version");
         assertThat(version.code()).as(version.err()).isZero();
         assertThat(version.out()).startsWith("kreteg ");
+
+        Result guide = kreteg("", "guide");
+        assertThat(guide.code()).as(guide.err()).isZero();
+        assertThat(guide.out()).contains("## Listen", "kreteg watch --once NAME", "Monitor({");
 
         assertThat(kreteg("", "inbox").code()).isEqualTo(2);
         assertThat(kreteg("", "no-such-command").code()).isEqualTo(2);

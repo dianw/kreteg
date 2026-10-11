@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Properties;
@@ -201,10 +202,13 @@ public class Cli {
     }
 
     @Command(name = "watch", description = {"Print one block per new message for NAME until stopped, for harnesses",
-            "that turn command output into notifications. Consumes the inbox, like 'kreteg inbox'."})
+            "that turn command output into notifications; with --once, exit after the first messages, for harnesses",
+            "that wake the agent when a background command ends. Consumes the inbox, like 'kreteg inbox'."})
     int watch(@Parameters(index = "0", paramLabel = "NAME") String name,
               @Parameters(index = "1", defaultValue = "30", paramLabel = "WAIT",
-                      description = "Seconds each poll waits (default 30)") int waitSeconds) {
+                      description = "Seconds each poll waits (default 30)") int waitSeconds,
+              @Option(names = "--once", description = "Wait for messages however long it takes, print them, and "
+                      + "exit") boolean once) {
         ObjectNode registration = Hub.JSON.createObjectNode().put("name", name);
         String inbox = Hub.path("/api/participants/{}/inbox", name) + "?wait=" + waitSeconds;
         try {
@@ -213,8 +217,9 @@ public class Cli {
                 err.println("[kreteg] cannot reach " + hub.baseUrl() + ", retrying in " + backoff + "s");
                 Thread.sleep(backoff * 1000L);
             }
-            out.println("[kreteg] watching inbox of " + name + " at " + hub.baseUrl());
-            out.flush();
+            // With --once, stdout carries only the messages, which is what the woken agent reads
+            (once ? err : out).println("[kreteg] watching inbox of " + name + " at " + hub.baseUrl());
+            (once ? err : out).flush();
             int backoff = 1;
             while (!Thread.currentThread().isInterrupted()) {
                 JsonNode messages;
@@ -236,9 +241,26 @@ public class Cli {
                     out.println(Format.message(message));
                     out.flush();
                 }
+                // The server caps each poll (kreteg.inbox.max-wait-seconds), so an empty one just polls again
+                if (once && !messages.isEmpty()) {
+                    break;
+                }
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+        }
+        return 0;
+    }
+
+    @Command(name = "guide", description = {"Print how an agent uses Kreteg (the skill, with its references), for",
+            "harnesses without skills. Needs no hub."})
+    int guide(@Option(names = "--write-skill", paramLabel = "DIR",
+            description = "Write the skill files into DIR instead, e.g. ~/.claude/skills/kreteg") Path dir)
+            throws IOException {
+        if (dir == null) {
+            out.print(Skill.guide());
+        } else {
+            Skill.write(dir).forEach(path -> out.println("wrote " + path));
         }
         return 0;
     }
