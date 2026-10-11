@@ -99,6 +99,20 @@ public class ConversationTools {
     }
 
     @Tool(description = """
+            Show the conversation's watchers what you are doing right now, e.g. 'running the test suite', before a \
+            step that takes more than a minute or so. It is one line, not a message: nobody receives it in their \
+            inbox, and it is not kept. Your next message in the conversation clears it, as does an empty text; it \
+            also expires after 10 minutes. It doesn't replace answering.""")
+    public String status(@ToolArg(description = ME) String me,
+                         @ToolArg(description = "Conversation id") String conversation,
+                         @ToolArg(description = "What you are doing, one line; leave out to clear",
+                                 required = false) String text) {
+        service.status(me, conversation, text);
+        return text == null || text.isBlank() ? "Cleared your status in " + conversation
+                : "Status set in " + conversation;
+    }
+
+    @Tool(description = """
             Mark a message that names you in 'to' as handled without an answer, when it needs none: you were told \
             not to reply, or it is only for your information. Sends nothing and notifies nobody; it tells the sender \
             you are no longer working on it.""")

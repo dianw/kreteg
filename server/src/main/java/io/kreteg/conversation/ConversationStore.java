@@ -118,6 +118,7 @@ public class ConversationStore {
     private static final String MARK_DONE = """
             UPDATE member SET done_seq = max(done_seq, coalesce((SELECT seq FROM message WHERE id = ? AND conversation_id = ?), 0))
             WHERE conversation_id = ? AND participant = ?
+            RETURNING cursor_seq, done_seq
             """;
 
     private static final String DELETE_MEMBER = "DELETE FROM member WHERE conversation_id = ? AND participant = ?";
@@ -160,7 +161,16 @@ public class ConversationStore {
             WHERE participant = ? AND cursor_seq < (
                 SELECT coalesce(max(m.seq), 0) FROM message m
                 WHERE m.conversation_id = member.conversation_id AND m.seq <= ?)
+            RETURNING conversation_id, cursor_seq, done_seq
             """;
+
+    /** A member's positions in one conversation: how far its inbox has read, and its last ask closed with done. */
+    public record Positions(String conversationId, long readSeq, long doneSeq) {
+    }
+
+    /** What {@link #takeInbox} took, and the memberships whose read position it moved. */
+    public record Taken(List<Message> messages, List<Positions> moved) {
+    }
 
     private final Jdbi jdbi;
 
@@ -265,14 +275,18 @@ public class ConversationStore {
         return memberSeqs(SELECT_DONE_SEQ, conversationId);
     }
 
-    /** Records that the member has handled the message and everything before it without answering. */
-    public void markDone(String conversationId, String participant, String messageId) {
-        write(h -> h.createUpdate(MARK_DONE)
+    /**
+     * Records that the member has handled the message and everything before it without answering; returns the
+     * member's positions afterwards.
+     */
+    public Positions markDone(String conversationId, String participant, String messageId) {
+        return write(h -> h.createQuery(MARK_DONE)
                 .bind(0, messageId)
                 .bind(1, conversationId)
                 .bind(2, conversationId)
                 .bind(3, participant)
-                .execute());
+                .map((rs, ctx) -> new Positions(conversationId, rs.getLong(1), rs.getLong(2)))
+                .one());
     }
 
     /** Appends a message; returns it with its assigned {@code seq} and {@code createdAt}. */
@@ -322,7 +336,7 @@ public class ConversationStore {
      * the last returned message when {@code limit} cut the batch short, otherwise to the end of each conversation.
      * Messages are inserted under the same write lock, so none can appear between the scan and the cursor update.
      */
-    public List<Message> takeInbox(String participant, int limit) {
+    public Taken takeInbox(String participant, int limit) {
         return write(h -> {
             List<Message> messages = h.createQuery(SELECT_INBOX)
                     .bind(0, participant)
@@ -332,12 +346,13 @@ public class ConversationStore {
                     .map((rs, ctx) -> message(rs))
                     .list();
             long scannedTo = messages.size() < limit ? Long.MAX_VALUE : messages.getLast().seq();
-            h.createUpdate(ADVANCE_CURSORS)
+            List<Positions> moved = h.createQuery(ADVANCE_CURSORS)
                     .bind(0, scannedTo)
                     .bind(1, participant)
                     .bind(2, scannedTo)
-                    .execute();
-            return messages;
+                    .map((rs, ctx) -> new Positions(rs.getString(1), rs.getLong(2), rs.getLong(3)))
+                    .list();
+            return new Taken(messages, moved);
         });
     }
 

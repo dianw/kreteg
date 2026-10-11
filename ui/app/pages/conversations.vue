@@ -4,22 +4,19 @@ import type { Conversation } from '~/types/kreteg'
 const route = useRoute()
 const api = useKretegApi()
 const identity = useIdentity()
-const conversations = ref<Conversation[]>([])
+// Kept current by the event stream, latest activity first
+const conversations = useConversations()
+const participants = useParticipants()
 const scope = ref<'all' | 'mine'>('all')
 const search = ref('')
 const activeId = computed(() => route.params.id as string | undefined)
 
-const { refresh } = usePolling(async () => {
-  const member = scope.value === 'mine' && identity.name.value ? identity.name.value : undefined
-  conversations.value = (await api.conversations(member)).sort((a, b) => b.lastActivityAt - a.lastActivityAt)
-}, 5000)
-watch([scope, identity.name], refresh)
-
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase()
-  if (!q) return conversations.value
-  return conversations.value.filter(c =>
-    c.title.toLowerCase().includes(q) || c.members.some(m => m.toLowerCase().includes(q)))
+  const me = identity.name.value
+  return conversations.list.value.filter(c =>
+    (scope.value === 'all' || !me || c.members.includes(me))
+    && (!q || c.title.toLowerCase().includes(q) || c.members.some(m => m.toLowerCase().includes(q))))
 })
 
 function memberLine(c: Conversation) {
@@ -33,11 +30,11 @@ const members = ref<string[]>([])
 const others = ref<string[]>([])
 const creating = ref(false)
 
-watch(createOpen, async (open) => {
+watch(createOpen, (open) => {
   if (!open) return
   title.value = ''
   members.value = []
-  others.value = (await api.participants()).map(p => p.name).filter(n => n !== identity.name.value)
+  others.value = participants.list.value.map(p => p.name).filter(n => n !== identity.name.value)
 })
 
 async function create() {
@@ -45,7 +42,7 @@ async function create() {
   try {
     const conversation = await api.create(identity.name.value, title.value.trim(), members.value)
     createOpen.value = false
-    await refresh()
+    conversations.put(conversation)
     await navigateTo(`/conversations/${conversation.id}`)
   } finally {
     creating.value = false

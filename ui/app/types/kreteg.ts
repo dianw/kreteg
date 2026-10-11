@@ -47,3 +47,19 @@ export interface Message {
   text: string
   createdAt: number
 }
+
+/** A `status` event: what a member says it is doing right now. Held in the hub's memory only, never stored. */
+export interface MemberStatus {
+  name: string
+  /** Null when the status was cleared. */
+  text: string | null
+  /** When it was set; the hub drops a status 10 minutes after this. */
+  at: number
+}
+
+/** A `receipt` event: a member's read or done position moved (the values in ConversationDetail). */
+export interface Receipt {
+  name: string
+  readSeq: number
+  doneSeq: number
+}

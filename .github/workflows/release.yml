@@ -1,5 +1,6 @@
 # Native binaries for each OS/CPU. GraalVM cannot cross-compile, so every target builds on its own runner.
-# A v* tag publishes a GitHub Release (install.sh downloads from it); a manual run only uploads workflow artifacts.
+# A v* tag publishes a GitHub Release with the binaries and the install scripts, stamped with the tag so each installs
+# its own release; a manual run only uploads workflow artifacts.
 name: Release
 
 on:
@@ -82,9 +83,13 @@ jobs:
           pattern: kreteg-*
           path: dist
           merge-multiple: true
-      - name: Add client files and checksums
+      # The skill isn't a separate asset: the binary carries it and the installers write it with 'kreteg guide'
+      - name: Add install scripts and checksums
         run: |
-          cp client/skill/SKILL.md client/kreteg-watch dist/
+          # @VERSION@ is the scripts' default release; an unstamped copy (from a checkout) installs the latest one
+          for f in install/install.sh install/uninstall.sh install/install.ps1 install/uninstall.ps1; do
+            sed "s/@VERSION@/$GITHUB_REF_NAME/g" "$f" > "dist/$(basename "$f")"
+          done
           cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
       - name: Publish release
         env:
