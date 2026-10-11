@@ -2,15 +2,20 @@
 # Install Kreteg for the current user: the binary (hub and command-line client in one), a background service, the
 # agent skill, and a Claude Code permission rule for the client. Needs no administrator rights. Re-run it to upgrade.
 #
-#   curl -fsSL https://raw.githubusercontent.com/dianw/kreteg/main/install.sh | sh
+#   curl -fsSL https://github.com/dianw/kreteg/releases/latest/download/install.sh | sh
 #
-# Env: KRETEG_VERSION     release tag to install (default: latest, e.g. v0.1.0)
+# Each release publishes its own copy of this script with its tag stamped in, so it installs the binary it shipped
+# with. Run from a checkout, it installs the latest release.
+#
+# Env: KRETEG_VERSION     release tag to install (default: the release this script came from, e.g. v0.3.0)
 #      KRETEG_BIN_DIR     where the binary goes (default: ~/.local/bin)
 #      KRETEG_NO_SERVICE  set to 1 to skip the background service
 #      KRETEG_MCP         set to 1 to also register the MCP server with Claude Code, for agents without a shell
 set -eu
 
 REPO="dianw/kreteg"
+# Replaced with the tag by release.yml; an unreplaced placeholder means a checkout, which installs the latest release
+VERSION="${KRETEG_VERSION:-@VERSION@}"
 PORT=5784
 LABEL="io.kreteg.server"
 
@@ -23,7 +28,7 @@ detect_platform() {
   case "$(uname -s)" in
     Darwin) os=darwin ;;
     Linux) os=linux ;;
-    *) die "unsupported OS $(uname -s); on Windows run install.ps1 in PowerShell instead" ;;
+    *) die "unsupported OS $(uname -s); on Windows run this in PowerShell instead: irm $base/install.ps1 | iex" ;;
   esac
   case "$(uname -m)" in
     x86_64 | amd64) arch=amd64 ;;
@@ -39,13 +44,21 @@ sha256() {
   fi
 }
 
+resolve_version() {
+  case "$VERSION" in
+    @*@ | latest) version=latest; base="https://github.com/$REPO/releases/latest/download" ;;
+    *) version="$VERSION"; base="https://github.com/$REPO/releases/download/$VERSION" ;;
+  esac
+}
+
 download() {
-  version="${KRETEG_VERSION:-latest}"
-  if [ "$version" = latest ]; then base="https://github.com/$REPO/releases/latest/download"
-  else base="https://github.com/$REPO/releases/download/$version"
-  fi
   say "downloading $asset ($version)"
-  for f in "$asset" SHA256SUMS SKILL.md; do
+  curl -fsSL -o "$tmp/SHA256SUMS" "$base/SHA256SUMS" || die "cannot download $base/SHA256SUMS"
+  # Releases before 0.3.0 have no client commands, so the units and skill written below would not work with them.
+  # They are recognised by name, without running the binary: a 0.2.0 binary given any argument starts a hub.
+  awk '$2 == "install.sh" || $2 == "*install.sh" { found = 1 } END { exit !found }' "$tmp/SHA256SUMS" ||
+    die "release $version predates the kreteg command (0.3.0); install v0.3.0 or later"
+  for f in "$asset" SKILL.md; do
     curl -fsSL -o "$tmp/$f" "$base/$f" || die "cannot download $base/$f"
   done
   for f in "$asset" SKILL.md; do
@@ -218,6 +231,7 @@ EOF
 
 main() {
   has curl || die "curl is required"
+  resolve_version
   detect_platform
   bin_dir="${KRETEG_BIN_DIR:-$HOME/.local/bin}"
   data_dir="${XDG_DATA_HOME:-$HOME/.local/share}/kreteg"
@@ -244,7 +258,7 @@ main() {
   fi
 
   say "done. data: $data_dir; try: kreteg who"
-  say "uninstall: curl -fsSL https://raw.githubusercontent.com/$REPO/main/uninstall.sh | sh"
+  say "uninstall: curl -fsSL https://github.com/$REPO/releases/latest/download/uninstall.sh | sh"
 }
 
 # Everything runs from main, so a partially downloaded script does nothing

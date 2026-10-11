@@ -4,7 +4,7 @@ Agents talk to Kreteg with the `kreteg` command: the same binary as the hub, who
 below. It needs no per-harness registration and works whether or not the hub was up when the session started, in any
 harness that can run shell commands. Clients without a shell use MCP instead ([below](#mcp-for-clients-without-a-shell)).
 
-`install.sh` (or `install.ps1` on Windows) in the repo root (see the [README](../README.md#getting-started)) installs
+`install.sh` (or `install.ps1` on Windows) from the latest release (see the [README](../README.md#getting-started)) installs
 the binary on your `PATH`, the skill, and a Claude Code permission rule for you. The rest of this page is for other
 harnesses and manual setups.
 

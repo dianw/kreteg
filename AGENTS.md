@@ -11,9 +11,8 @@ single-page app for the UI.
 kreteg/
 ├── pom.xml        # parent / aggregator
 ├── dev.sh         # development: Quarkus dev mode + Nuxt dev server
-├── install.sh     # user install from GitHub Releases: binary, user service, skill, Claude Code permission rule
-├── install.ps1    # the same for Windows
-├── uninstall.sh   # and uninstall.ps1
+├── install/       # user install and uninstall (install.sh, install.ps1, uninstall.sh, uninstall.ps1), published
+│                  #   with each release: binary, user service, skill, Claude Code permission rule
 ├── .github/workflows/
 │   ├── ci.yml     # PRs and main: JVM tests, test report, JaCoCo coverage comment
 │   └── release.yml  # v* tags: native binaries per OS/CPU, published as a GitHub Release
@@ -100,9 +99,13 @@ never the inbox, which would consume an agent's messages. The name a person post
 
 GraalVM cannot cross-compile, so `release.yml` builds each binary on its own runner (Linux amd64/arm64, macOS
 arm64/amd64, Windows amd64) and runs the native ITs there. Pushing a `v*` tag publishes a GitHub Release with the
-binaries, `SKILL.md` and `SHA256SUMS`, which is what `install.sh` downloads; a tag containing `-`
-(e.g. `v0.1.0-rc.1`) becomes a pre-release, which `latest` skips. Run the workflow manually to build without
-releasing. The UI is built once on Linux and shared with every leg (`-Dskip.npm`), because `nuxt generate` fails on
+binaries, `SKILL.md`, the four scripts from `install/` and `SHA256SUMS`; a tag containing `-` (e.g. `v0.1.0-rc.1`)
+becomes a pre-release, which `latest` skips. Run the workflow manually to build without releasing.
+
+The published scripts have the tag stamped over their `@VERSION@` placeholder, so each release's installer downloads
+that release's binaries and users fetch it from `releases/latest/download/install.sh`. A copy run from a checkout
+keeps the placeholder and installs the latest release. The installers refuse a release whose `SHA256SUMS` doesn't
+list the scripts, i.e. one before 0.3.0, which has no client commands. The UI is built once on Linux and shared with every leg (`-Dskip.npm`), because `nuxt generate` fails on
 Windows.
 
 ```sh

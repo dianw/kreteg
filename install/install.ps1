@@ -2,9 +2,12 @@
 # started at logon, the agent skill, and a Claude Code permission rule for the client. Needs no administrator rights.
 # Re-run it to upgrade. Works in Windows PowerShell 5.1 and PowerShell 7.
 #
-#   irm https://raw.githubusercontent.com/dianw/kreteg/main/install.ps1 | iex
+#   irm https://github.com/dianw/kreteg/releases/latest/download/install.ps1 | iex
 #
-# Env: KRETEG_VERSION     release tag to install (default: latest, e.g. v0.1.0)
+# Each release publishes its own copy of this script with its tag stamped in, so it installs the binary it shipped
+# with. Run from a checkout, it installs the latest release.
+#
+# Env: KRETEG_VERSION     release tag to install (default: the release this script came from, e.g. v0.3.0)
 #      KRETEG_BIN_DIR     where the binary goes (default: %LOCALAPPDATA%\Programs\kreteg)
 #      KRETEG_NO_SERVICE  set to 1 to skip the background task
 #      KRETEG_MCP         set to 1 to also register the MCP server with Claude Code, for agents without a shell
@@ -47,18 +50,27 @@ function Install-Kreteg {
   try {
     # --- download and verify
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    $version = if ($env:KRETEG_VERSION) { $env:KRETEG_VERSION } else { 'latest' }
+    # release.yml replaces the placeholder with the tag; an unreplaced one means a checkout: the latest release
+    $version = if ($env:KRETEG_VERSION) { $env:KRETEG_VERSION } else { '@VERSION@' }
+    if ($version -like '@*@') { $version = 'latest' }
     $base = if ($version -eq 'latest') { "https://github.com/$repo/releases/latest/download" }
             else { "https://github.com/$repo/releases/download/$version" }
     Say "downloading $asset ($version)"
-    foreach ($f in $asset, 'SHA256SUMS', 'SKILL.md') {
-      try { Invoke-WebRequest -UseBasicParsing -Uri "$base/$f" -OutFile (Join-Path $tmp $f) }
-      catch { Die "cannot download $base/$f" }
-    }
+    try { Invoke-WebRequest -UseBasicParsing -Uri "$base/SHA256SUMS" -OutFile (Join-Path $tmp 'SHA256SUMS') }
+    catch { Die "cannot download $base/SHA256SUMS" }
     $sums = @{}
     foreach ($line in Get-Content (Join-Path $tmp 'SHA256SUMS')) {
       $hash, $name = $line -split '\s+', 2
       if ($name) { $sums[$name.TrimStart('*')] = $hash }
+    }
+    # Releases before 0.3.0 have no client commands, so the task and skill written below would not work with them.
+    # They are recognised by name, without running the binary: a 0.2.0 binary given any argument starts a hub.
+    if (-not $sums.ContainsKey('install.ps1')) {
+      Die "release $version predates the kreteg command (0.3.0); install v0.3.0 or later"
+    }
+    foreach ($f in $asset, 'SKILL.md') {
+      try { Invoke-WebRequest -UseBasicParsing -Uri "$base/$f" -OutFile (Join-Path $tmp $f) }
+      catch { Die "cannot download $base/$f" }
     }
     foreach ($f in $asset, 'SKILL.md') {
       if (-not $sums.ContainsKey($f)) { Die "$f is missing from SHA256SUMS" }
@@ -224,7 +236,7 @@ cd /d "$dataDir"
     }
 
     Say "done. data: $dataDir; try (in a new terminal): kreteg who"
-    Say "uninstall: irm https://raw.githubusercontent.com/$repo/main/uninstall.ps1 | iex"
+    Say "uninstall: irm https://github.com/$repo/releases/latest/download/uninstall.ps1 | iex"
   } finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
   }

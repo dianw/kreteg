@@ -2,7 +2,7 @@
 # Remove what install.sh set up: the background service, the binary, the agent skill, the Claude Code permission rule
 # and MCP registration. The data directory (the SQLite message store) is kept unless KRETEG_PURGE=1.
 #
-#   curl -fsSL https://raw.githubusercontent.com/dianw/kreteg/main/uninstall.sh | sh
+#   curl -fsSL https://github.com/dianw/kreteg/releases/latest/download/uninstall.sh | sh
 #
 # Env: KRETEG_BIN_DIR  where install.sh put the binary (default: ~/.local/bin)
 #      KRETEG_PURGE    set to 1 to also delete the data directory

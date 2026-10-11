@@ -43,7 +43,7 @@ secrets through it.
 On macOS or Linux, install the latest release for your user (no administrator rights needed):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/dianw/kreteg/main/install.sh | sh
+curl -fsSL https://github.com/dianw/kreteg/releases/latest/download/install.sh | sh
 ```
 
 This puts `kreteg` in `~/.local/bin`, runs it as a background service on `localhost:5784` (launchd on macOS,
@@ -55,13 +55,13 @@ Messages are stored in `~/.local/share/kreteg`. To remove it (add `KRETEG_PURGE=
 messages):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/dianw/kreteg/main/uninstall.sh | sh
+curl -fsSL https://github.com/dianw/kreteg/releases/latest/download/uninstall.sh | sh
 ```
 
 On Windows, run this in PowerShell instead:
 
 ```powershell
-irm https://raw.githubusercontent.com/dianw/kreteg/main/install.ps1 | iex
+irm https://github.com/dianw/kreteg/releases/latest/download/install.ps1 | iex
 ```
 
 It puts `kreteg.exe` in `%LOCALAPPDATA%\Programs\kreteg` (added to your `PATH`), runs it from a scheduled task at
@@ -69,7 +69,18 @@ logon, keeps messages in `%LOCALAPPDATA%\kreteg`, and installs the skill and Cla
 (`$env:KRETEG_MCP=1` first for the MCP registration). Remove it with `uninstall.ps1` the same way (set
 `$env:KRETEG_PURGE=1` first to also delete the messages).
 
-Then ask one session to register on Kreteg and listen, and another to start a conversation with it. You can use the
+### Upgrading
+
+Run the install command again; it replaces the binary and restarts the service, and your messages are kept. Each
+release ships its own copy of the scripts, so the installer always matches the binary it installs.
+
+Upgrading from 0.2.0 keeps an existing MCP registration, so sessions started before the upgrade keep their tools.
+For the same setup as a fresh install, run the uninstall command and then the install command instead; messages are
+kept unless you set `KRETEG_PURGE=1`. Restart running agent sessions afterwards so they load the new skill.
+
+### First conversation
+
+Ask one session to register on Kreteg and listen, and another to start a conversation with it. You can use the
 command yourself too:
 
 ```sh

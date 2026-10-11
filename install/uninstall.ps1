@@ -1,7 +1,7 @@
 # Remove what install.ps1 set up: the background task, the binary, the agent skill, the Claude Code permission rule
 # and MCP registration. The data directory (the SQLite message store) is kept unless KRETEG_PURGE=1.
 #
-#   irm https://raw.githubusercontent.com/dianw/kreteg/main/uninstall.ps1 | iex
+#   irm https://github.com/dianw/kreteg/releases/latest/download/uninstall.ps1 | iex
 #
 # Env: KRETEG_BIN_DIR  where install.ps1 put the binary (default: %LOCALAPPDATA%\Programs\kreteg)
 #      KRETEG_PURGE    set to 1 to also delete the data directory
