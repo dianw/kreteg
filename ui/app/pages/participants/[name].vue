@@ -1,21 +1,19 @@
 <script setup lang="ts">
-import type { Conversation, Participant } from '~/types/kreteg'
+import type { Conversation } from '~/types/kreteg'
 
 const route = useRoute()
 const name = route.params.name as string
 const api = useKretegApi()
 const identity = useIdentity()
 
-const participant = ref<Participant | null>(null)
-const notFound = ref(false)
-const conversations = ref<Conversation[]>([])
-
-usePolling(async () => {
-  const [all, theirs] = await Promise.all([api.participants(), api.conversations(name)])
-  participant.value = all.find(p => p.name === name) ?? null
-  notFound.value = !participant.value
-  conversations.value = theirs.sort((a, b) => b.createdAt - a.createdAt)
-}, 5000)
+// Kept current by the event stream
+const participants = useParticipants()
+const allConversations = useConversations()
+const participant = computed(() => participants.byName.value.get(name) ?? null)
+const notFound = computed(() => participants.loaded.value && !participant.value)
+const conversations = computed(() => allConversations.list.value
+  .filter(c => c.members.includes(name))
+  .sort((a, b) => b.createdAt - a.createdAt))
 
 const isMe = computed(() => name === identity.name.value)
 
@@ -34,6 +32,7 @@ async function message() {
   starting.value = true
   try {
     const conversation = await api.create(identity.name.value, `${identity.name.value} & ${name}`, [name])
+    allConversations.put(conversation)
     await navigateTo(`/conversations/${conversation.id}`)
   } finally {
     starting.value = false

@@ -1,21 +1,17 @@
 <script setup lang="ts">
-import type { Participant } from '~/types/kreteg'
-
 const STATUS_ORDER = { live: 0, idle: 1, stale: 2 } as const
 
 const route = useRoute()
-const api = useKretegApi()
 const identity = useIdentity()
-const participants = ref<Participant[]>([])
+const all = useParticipants()
 // Test runs leave many stale participants behind, so the list starts with the ones still around
 const scope = ref<'active' | 'all'>('active')
 const search = ref('')
 const activeName = computed(() => route.params.name as string | undefined)
 
-usePolling(async () => {
-  participants.value = (await api.participants()).sort((a, b) =>
-    STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || b.lastSeen - a.lastSeen)
-}, 5000)
+// Kept current by the event stream; presence moves on with the clock
+const participants = computed(() => [...all.list.value].sort((a, b) =>
+  STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || b.lastSeen - a.lastSeen))
 
 const filtered = computed(() => {
   const q = search.value.trim().toLowerCase()

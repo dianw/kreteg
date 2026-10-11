@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ConversationDetail, Message, Participant } from '~/types/kreteg'
+import type { ConversationDetail, MemberStatus, Message } from '~/types/kreteg'
 
 const route = useRoute()
 const id = route.params.id as string
@@ -13,17 +13,40 @@ const byId = computed(() => new Map(messages.value.map(m => [m.id, m])))
 const isMember = computed(() => !!identity.name.value && !!conversation.value?.members.includes(identity.name.value))
 const scroller = useTemplateRef<HTMLElement>('scroller')
 
-// Members and read positions change while the conversation is open, so they are polled as often as the messages
-const { refresh: refreshConversation } = usePolling(async () => {
-  conversation.value = await api.conversation(id)
-  notFound.value = !conversation.value
-}, 2000)
+/**
+ * The tab's event stream, which this page points at the conversation. While it keeps failing (`polling`), messages,
+ * members and read positions come from polling, as they did before the stream existed.
+ */
+const hub = useHub()
+const polling = hub.polling
 
-// Statuses tell whether an agent that owes an answer is still around
-const participants = ref(new Map<string, Participant>())
-usePolling(async () => {
-  participants.value = new Map((await api.participants()).map(p => [p.name, p]))
-}, 5000)
+/** Per member, the higher position of the two: positions only move forward, so a lower one is older news. */
+function maxSeqs(a: Record<string, number> = {}, b: Record<string, number> = {}) {
+  const out = { ...a }
+  for (const [name, seq] of Object.entries(b)) out[name] = Math.max(out[name] ?? 0, seq)
+  return out
+}
+
+async function loadConversation() {
+  const fetched = await api.conversation(id)
+  notFound.value = !fetched
+  // A receipt event newer than this snapshot may have landed while it was on its way
+  const held = conversation.value
+  if (fetched && held) {
+    fetched.readSeq = maxSeqs(fetched.readSeq, held.readSeq)
+    fetched.doneSeq = maxSeqs(fetched.doneSeq, held.doneSeq)
+  }
+  conversation.value = fetched
+}
+usePolling(loadConversation, 2000, () => polling.value)
+
+function refreshConversation() {
+  // Failures are reported by the API wrapper
+  loadConversation().catch(() => {})
+}
+
+// Presence tells whether an agent that owes an answer is still around; kept current by the event stream
+const participants = useParticipants().byName
 
 /** Agents read through their inbox, so they have read positions; people read through the UI's history and don't. */
 function isAgent(name: string) {
@@ -117,28 +140,97 @@ function maybeLoadOlder() {
   if (el && el.scrollTop < 300 && hasOlder.value && !loadingOlder.value) loadOlder().then(() => nextTick(maybeLoadOlder)).catch(() => {})
 }
 
-// History, not inbox: reading must not consume anyone's messages
-const history = usePolling(async () => {
-  if (!loaded.value) {
+/**
+ * Adds messages in seq order, skipping seqs already held: the stream, its replay after a reconnect and polling can
+ * each deliver a message the page has. One below the loaded pages is left for loadOlder.
+ */
+function addMessages(page: Message[]) {
+  const list = messages.value
+  for (const m of page) {
+    if (!list.length || m.seq > list.at(-1)!.seq) {
+      list.push(m)
+      continue
+    }
+    if (hasOlder.value && m.seq < list[0]!.seq) continue
+    let i = list.length - 1
+    while (i >= 0 && list[i]!.seq > m.seq) i--
+    if (list[i]?.seq !== m.seq) list.splice(i + 1, 0, m)
+  }
+  if (page.some(m => m.from === identity.name.value)) pinned = true
+}
+
+/** Seq of the newest message held, which the stream and polling continue from. */
+const lastSeq = () => messages.value.at(-1)?.seq ?? 0
+
+// History, not inbox: reading must not consume anyone's messages. The latest page is loaded first, and the event
+// stream continues from its last seq.
+let unmounted = false
+onBeforeUnmount(() => (unmounted = true))
+async function loadLatest() {
+  try {
     const page = await api.historyBefore(id, LATEST, PAGE)
     messages.value = page
     hasOlder.value = page.length === PAGE
     loaded.value = true
-    await nextTick()
-    scrollToBottom()
-    maybeLoadOlder()
+  } catch {
+    // Reported by the API wrapper; try again unless the page is gone or the conversation doesn't exist
+    if (!unmounted && !notFound.value) setTimeout(loadLatest, 2000)
     return
   }
+  hub.follow(id, lastSeq)
+  await nextTick()
+  scrollToBottom()
+  maybeLoadOlder()
+}
+onMounted(() => {
+  refreshConversation()
+  loadLatest()
+})
+onBeforeUnmount(() => hub.unfollow(id))
+
+const history = usePolling(async () => {
   let page: Message[]
   do {
-    const since = messages.value.at(-1)?.seq ?? 0
-    page = await api.history(id, since, PAGE)
-    if (page.length) {
-      if (page.some(m => m.from === identity.name.value)) pinned = true
-      messages.value.push(...page)
-    }
+    page = await api.history(id, lastSeq(), PAGE)
+    addMessages(page)
   } while (page.length === PAGE)
-}, 2000)
+}, 2000, () => polling.value && loaded.value)
+
+/** What members say they are doing, from `status` events. The hub holds them in memory and drops them after this. */
+const STATUS_TTL_MS = 10 * 60_000
+const statuses = ref(new Map<string, MemberStatus>())
+
+hub.onConversation(id, 'message', m => addMessages([m]))
+hub.onConversation(id, 'status', (s) => {
+  if (s.text) statuses.value.set(s.name, s)
+  else statuses.value.delete(s.name)
+})
+hub.onConversation(id, 'receipt', (r) => {
+  const c = conversation.value
+  if (!c) return
+  c.readSeq = maxSeqs(c.readSeq, { [r.name]: r.readSeq })
+  c.doneSeq = maxSeqs(c.doneSeq, { [r.name]: r.doneSeq })
+})
+hub.onConversation(id, 'members', ({ members }) => {
+  if (conversation.value) conversation.value.members = members
+})
+// Only messages and statuses are replayed when the stream opens, so the rest is fetched again, and statuses held from
+// before are dropped: the replay sends the ones that still hold
+hub.onOpen((followed) => {
+  if (followed !== id) return
+  statuses.value = new Map()
+  refreshConversation()
+})
+// Statuses come only through the stream; the age check below would hide them, but not as soon as this
+watch(polling, on => on && (statuses.value = new Map()))
+
+/** Ticks so that statuses and asks age out while nothing else changes. */
+const now = useNow()
+
+function statusOf(name: string) {
+  const s = statuses.value.get(name)
+  return s?.text && now.value - s.at < STATUS_TTL_MS ? s : null
+}
 
 /**
  * Messages you sent that history has not returned yet, shown at the end of the thread straight away. Once the server
@@ -210,23 +302,35 @@ function receipt(m: Message) {
 const WORKING_WINDOW_MS = 15 * 60_000
 
 /**
- * Agents that have taken a message asking them to answer and not posted since. The watch script takes a message
- * as soon as it arrives and wakes the agent with it, so having it means working on it. An agent that closed the ask
- * with `done` chose not to answer, so it isn't waited on.
+ * The message asking an agent to answer that it has taken and not answered: it hasn't posted since. The watch script
+ * takes a message as soon as it arrives and wakes the agent with it, so having it means working on it. An agent that
+ * closed the ask with `done` chose not to answer, so it isn't waited on.
+ */
+function pendingAsk(c: ConversationDetail, name: string) {
+  let ask: Message | undefined
+  for (let i = messages.value.length - 1; i >= 0 && !ask; i--) {
+    const m = messages.value[i]!
+    if (m.from === name) return undefined
+    if (m.to.includes(name)) ask = m
+  }
+  if (!ask || (c.readSeq[name] ?? 0) < ask.seq || (c.doneSeq?.[name] ?? 0) >= ask.seq) return undefined
+  return ask
+}
+
+/**
+ * Members shown at the end of the thread like a typing indicator: agents with a pending ask, and anyone with a
+ * status. A status says what the member is doing, so it stands in for "working on it".
  */
 const waitingOn = computed(() => {
   const c = conversation.value
   if (!c) return []
-  return c.members.filter(isAgent).flatMap((name) => {
-    let ask: Message | undefined
-    for (let i = messages.value.length - 1; i >= 0 && !ask; i--) {
-      const m = messages.value[i]!
-      if (m.from === name) return []
-      if (m.to.includes(name)) ask = m
-    }
-    if (!ask || (c.readSeq[name] ?? 0) < ask.seq || (c.doneSeq?.[name] ?? 0) >= ask.seq) return []
-    const working = participants.value.get(name)?.status === 'live' && Date.now() - ask.createdAt < WORKING_WINDOW_MS
-    return [{ name, working }]
+  return c.members.flatMap((name) => {
+    const status = statusOf(name)
+    const ask = isAgent(name) ? pendingAsk(c, name) : undefined
+    if (!status && !ask) return []
+    const working = !!status
+      || (participants.value.get(name)?.status === 'live' && now.value - ask!.createdAt < WORKING_WINDOW_MS)
+    return [{ name, working, status }]
   })
 })
 const workingLine = computed(() => {
@@ -359,7 +463,7 @@ async function join() {
     // Already a member under that name: nothing to join, the composer appears
     if (!isMember.value) {
       await api.join(id, identity.name.value)
-      conversation.value = await api.conversation(id)
+      await loadConversation()
     }
   } finally {
     joining.value = false
@@ -468,14 +572,15 @@ function firstLine(message: Message) {
           </template>
 
           <div v-for="w in waitingOn" :key="`waiting-${w.name}`" class="pb-3">
-            <div class="inline-block rounded-lg rounded-tl-none bg-default shadow-xs px-2.5 py-1.5 space-y-1">
+            <div class="inline-block max-w-[85%] md:max-w-[70%] rounded-lg rounded-tl-none bg-default shadow-xs px-2.5 py-1.5 space-y-1">
               <p class="text-xs font-semibold" :class="nameColor(w.name)">{{ w.name }}</p>
-              <div v-if="w.working" class="flex items-center gap-2 text-xs text-muted">
-                <span aria-hidden="true" class="h-4 flex items-center gap-1 *:size-1.5 *:rounded-full *:bg-(--ui-text-dimmed)
+              <div v-if="w.working" class="flex items-center gap-2 text-xs text-muted"
+                   :title="w.status ? `Since ${formatClock(w.status.at)}` : undefined">
+                <span aria-hidden="true" class="h-4 shrink-0 flex items-center gap-1 *:size-1.5 *:rounded-full *:bg-(--ui-text-dimmed)
                   motion-safe:[&>*:nth-child(1)]:animate-[bounce_1s_infinite]
                   motion-safe:[&>*:nth-child(2)]:animate-[bounce_1s_0.15s_infinite]
                   motion-safe:[&>*:nth-child(3)]:animate-[bounce_1s_0.3s_infinite]"><span /><span /><span /></span>
-                working on it
+                <span class="min-w-0 break-words">{{ w.status?.text ?? 'working on it' }}</span>
               </div>
               <p v-else class="text-xs text-muted italic">went quiet without answering</p>
             </div>

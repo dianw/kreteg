@@ -32,8 +32,10 @@ export default defineNuxtConfig({
   devServer: { host: '::', port: 3000 },
   nitro: {
     // Dev only: the app calls /api on its own origin, as it does when Quarkus serves it. Quarkus listens on IPv4.
+    // KRETEG_DEV_API points it at another hub, e.g. a second dev instance. httpxy pipes responses as they come, so
+    // the SSE event stream passes through unbuffered.
     devProxy: {
-      '/api': { target: 'http://127.0.0.1:5784/api', changeOrigin: true },
+      '/api': { target: `${process.env.KRETEG_DEV_API ?? 'http://127.0.0.1:5784'}/api`, changeOrigin: true },
     },
   },
 })

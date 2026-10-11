@@ -4,7 +4,9 @@ import static io.kreteg.conversation.ConversationException.Reason.FORBIDDEN;
 import static io.kreteg.conversation.ConversationException.Reason.INVALID;
 import static io.kreteg.conversation.ConversationException.Reason.NOT_FOUND;
 
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -13,14 +15,20 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
 
+import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 
 import org.eclipse.microprofile.config.inject.ConfigProperty;
+
+import io.kreteg.conversation.ConversationEvents.MemberStatus;
+import io.kreteg.conversation.ConversationStore.Positions;
 
 /**
  * Multi-party conversations between registered participants. A message reaches the inboxes of the members named in
@@ -34,17 +42,50 @@ public class ConversationService {
 
     private static final int MAX_LIMIT = 500;
 
+    private static final int MAX_STATUS_LENGTH = 200;
+
     private final ConversationStore store;
+    private final ConversationEvents events;
     private final int maxWaitSeconds;
+    private final Duration statusTtl;
+    private final Duration participantThrottle;
 
     /** One pending signal per participant blocked in {@link #inbox}; completed and removed when mail arrives. */
     private final Map<String, CompletableFuture<Void>> waiters = new ConcurrentHashMap<>();
 
+    /** When each participant's last {@code participant} event went out, to throttle the ones for last seen. */
+    private final Map<String, Long> participantPublishedAt = new ConcurrentHashMap<>();
+
+    /** Participants with an event already scheduled for the end of their throttle window. */
+    private final Set<String> participantTrailing = ConcurrentHashMap.newKeySet();
+
+    /** Each conversation's current status lines by member. In memory only: they are gone after a restart. */
+    private final Map<String, Map<String, MemberStatus>> statuses = new ConcurrentHashMap<>();
+
+    /** Status expiry and trailing participant events. */
+    private final ScheduledExecutorService timers = Executors.newSingleThreadScheduledExecutor(task -> {
+        Thread thread = new Thread(task, "kreteg-timers");
+        thread.setDaemon(true);
+        return thread;
+    });
+
     @Inject
     public ConversationService(ConversationStore store,
-                               @ConfigProperty(name = "kreteg.inbox.max-wait-seconds") int maxWaitSeconds) {
+                               ConversationEvents events,
+                               @ConfigProperty(name = "kreteg.inbox.max-wait-seconds") int maxWaitSeconds,
+                               @ConfigProperty(name = "kreteg.status.ttl") Duration statusTtl,
+                               @ConfigProperty(name = "kreteg.events.presence-interval")
+                               Duration participantThrottle) {
         this.store = store;
+        this.events = events;
         this.maxWaitSeconds = maxWaitSeconds;
+        this.statusTtl = statusTtl;
+        this.participantThrottle = participantThrottle;
+    }
+
+    @PreDestroy
+    void stop() {
+        timers.shutdownNow();
     }
 
     /** Registers a participant, or refreshes an existing one. A null description keeps the current one. */
@@ -54,7 +95,10 @@ public class ConversationService {
                     + "': use 1-64 letters, digits, '.', '_' or '-', starting with a letter or digit");
         }
         store.upsertParticipant(name, blankToNull(description));
-        return store.findParticipant(name).orElseThrow();
+        Participant participant = store.findParticipant(name).orElseThrow();
+        participantPublishedAt.put(name, System.currentTimeMillis());
+        events.participant(participant);
+        return participant;
     }
 
     public List<Participant> participants() {
@@ -76,20 +120,29 @@ public class ConversationService {
         }
         String id = "c-" + shortId();
         store.insertConversation(id, title.strip(), me, List.copyOf(all));
-        return store.findConversation(id).orElseThrow();
+        Conversation created = store.findConversation(id).orElseThrow();
+        events.conversation(created);
+        return created;
     }
 
     public Conversation join(String me, String conversationId) {
         requireRegistered(me);
         requireConversation(conversationId);
         store.addMember(conversationId, me);
-        return store.findConversation(conversationId).orElseThrow();
+        Conversation joined = store.findConversation(conversationId).orElseThrow();
+        events.members(conversationId, joined.members());
+        events.conversation(joined);
+        return joined;
     }
 
     public void leave(String me, String conversationId) {
         requireRegistered(me);
         requireMembership(me, requireConversation(conversationId));
         store.removeMember(conversationId, me);
+        clearStatus(conversationId, me);
+        Conversation left = requireConversation(conversationId);
+        events.members(conversationId, left.members());
+        events.conversation(left);
     }
 
     /** Conversations {@code member} belongs to, or every conversation when {@code member} is null. */
@@ -134,7 +187,54 @@ public class ConversationService {
                 wake(member);
             }
         }
+        clearStatus(conversationId, me);
+        events.message(message);
+        events.conversation(store.findConversation(conversationId).orElseThrow());  // its last activity moved
         return message;
+    }
+
+    /**
+     * Sets {@code me}'s status line in the conversation, for watchers: what they are doing right now. It is kept in
+     * memory, never stored or delivered to an inbox, and cleared by an empty text, by {@code me}'s next message or
+     * leaving, or after {@code kreteg.status.ttl}. Longer or multi-line text is folded to one line of 200 characters.
+     */
+    public void status(String me, String conversationId, String text) {
+        requireRegistered(me);
+        requireMembership(me, requireConversation(conversationId));
+        String line = text == null ? "" : text.replaceAll("\\s+", " ").strip();
+        if (line.isEmpty()) {
+            clearStatus(conversationId, me);
+            return;
+        }
+        MemberStatus status = new MemberStatus(me, line.substring(0, Math.min(line.length(), MAX_STATUS_LENGTH)),
+                System.currentTimeMillis());
+        statuses.computeIfAbsent(conversationId, k -> new ConcurrentHashMap<>()).put(me, status);
+        events.status(conversationId, status);
+        timers.schedule(() -> expire(conversationId, status), statusTtl.toMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    /** The conversation's current status lines, oldest first. */
+    public List<MemberStatus> statuses(String conversationId) {
+        long oldest = System.currentTimeMillis() - statusTtl.toMillis();
+        return statuses.getOrDefault(conversationId, Map.of()).values().stream()
+                .filter(status -> status.at() > oldest)
+                .sorted(Comparator.comparingLong(MemberStatus::at))
+                .toList();
+    }
+
+    private void expire(String conversationId, MemberStatus status) {
+        Map<String, MemberStatus> current = statuses.get(conversationId);
+        // Only the status this timer was set for: a newer one has its own timer
+        if (current != null && current.remove(status.name(), status)) {
+            events.status(conversationId, new MemberStatus(status.name(), null, System.currentTimeMillis()));
+        }
+    }
+
+    private void clearStatus(String conversationId, String member) {
+        Map<String, MemberStatus> current = statuses.get(conversationId);
+        if (current != null && current.remove(member) != null) {
+            events.status(conversationId, new MemberStatus(member, null, System.currentTimeMillis()));
+        }
     }
 
     /**
@@ -148,7 +248,8 @@ public class ConversationService {
         if (messageId == null || !store.messageExists(messageId.strip(), conversationId)) {
             throw new ConversationException(NOT_FOUND, "No message " + messageId + " in " + conversationId);
         }
-        store.markDone(conversationId, me, messageId.strip());
+        Positions positions = store.markDone(conversationId, me, messageId.strip());
+        events.receipt(conversationId, me, positions.readSeq(), positions.doneSeq());
     }
 
     /**
@@ -164,7 +265,11 @@ public class ConversationService {
             while (true) {
                 // Register before reading, so a message sent between the read and the wait still wakes us
                 CompletableFuture<Void> signal = waiters.computeIfAbsent(me, k -> new CompletableFuture<>());
-                List<Message> messages = store.takeInbox(me, boundedLimit);
+                ConversationStore.Taken taken = store.takeInbox(me, boundedLimit);
+                for (Positions moved : taken.moved()) {
+                    events.receipt(moved.conversationId(), me, moved.readSeq(), moved.doneSeq());
+                }
+                List<Message> messages = taken.messages();
                 long remaining = deadline - System.nanoTime();
                 if (!messages.isEmpty() || remaining <= 0) {
                     return messages;
@@ -182,6 +287,7 @@ public class ConversationService {
             }
         } finally {
             store.touchParticipant(me);
+            touched(me);
         }
     }
 
@@ -208,6 +314,37 @@ public class ConversationService {
         if (name == null || !store.touchParticipant(name)) {
             throw notRegistered(name);
         }
+        touched(name);
+    }
+
+    /**
+     * Announces that {@code name} was just seen, at most once per {@code kreteg.events.presence-interval}: watchers
+     * touch last seen on every poll, and clients work out live, idle and stale from it with their own clock. A touch
+     * inside the window is sent when the window ends, with the latest value, so what clients know lags by at most the
+     * throttle.
+     */
+    private void touched(String name) {
+        long now = System.currentTimeMillis();
+        long throttle = participantThrottle.toMillis();
+        long[] wait = {0};
+        participantPublishedAt.compute(name, (k, last) -> {
+            boolean due = last == null || now - last >= throttle;
+            wait[0] = due ? 0 : last + throttle - now;
+            return due ? now : last;
+        });
+        if (wait[0] == 0) {
+            publishParticipant(name);
+        } else if (participantTrailing.add(name)) {
+            timers.schedule(() -> {
+                participantTrailing.remove(name);
+                participantPublishedAt.put(name, System.currentTimeMillis());
+                publishParticipant(name);
+            }, wait[0], TimeUnit.MILLISECONDS);
+        }
+    }
+
+    private void publishParticipant(String name) {
+        store.findParticipant(name).ifPresent(events::participant);
     }
 
     private void requireExists(String name) {
