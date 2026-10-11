@@ -203,14 +203,20 @@ public class ConversationResource {
         });
         List<Event> replay = new ArrayList<>();
         long last = after;
-        for (List<Message> page = service.history(id, after, REPLAY_PAGE); !page.isEmpty();
-                page = service.history(id, last, REPLAY_PAGE)) {
-            for (Message message : page) {
-                replay.add(Event.message(message));
-                last = message.seq();
+        try {
+            for (List<Message> page = service.history(id, after, REPLAY_PAGE); !page.isEmpty();
+                    page = service.history(id, last, REPLAY_PAGE)) {
+                for (Message message : page) {
+                    replay.add(Event.message(message));
+                    last = message.seq();
+                }
             }
+            service.statuses(id).forEach(status -> replay.add(Event.status(status)));
+        } catch (RuntimeException e) {
+            // No stream will ever be returned to close it
+            close(subscription);
+            throw e;
         }
-        service.statuses(id).forEach(status -> replay.add(Event.status(status)));
         long replayedTo = last;
 
         Multi<Event> conversation = Multi.createBy().concatenating().streams(
