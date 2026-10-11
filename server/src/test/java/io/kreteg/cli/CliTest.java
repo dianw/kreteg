@@ -215,7 +215,7 @@ class CliTest {
             pipe("second", "send", "--from", alice, "--to", bob, conversation);
 
             awaitOutput(out, "\nsecond\n");
-            assertThat(out.toString()).contains(" to everyone\nfirst\n\n", " to " + bob + "\nsecond\n\n");
+            assertThat(text(out)).contains(" to everyone\nfirst\n\n", " to " + bob + "\nsecond\n\n");
         } finally {
             watcher.interrupt();
             watcher.join(TimeUnit.SECONDS.toMillis(10));
@@ -241,7 +241,7 @@ class CliTest {
         assertThat(watcher.isAlive()).isFalse();
         assertThat(code[0]).isZero();
         // Only the messages on stdout: the startup line goes to stderr with --once
-        assertThat(out.toString()).startsWith("[kreteg] " + conversation + " \"once\" | m-")
+        assertThat(text(out)).startsWith("[kreteg] " + conversation + " \"once\" | m-")
                 .endsWith(" to " + bob + "\nwake up\n\n");
     }
 
@@ -338,12 +338,17 @@ class CliTest {
         }
     }
 
+    // println ends lines with \r\n on Windows; the assertions are written with \n
+    private static String text(StringWriter writer) {
+        return writer.toString().replace("\r\n", "\n");
+    }
+
     private static void awaitOutput(StringWriter out, String expected) throws InterruptedException {
         long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
-        while (!out.toString().contains(expected) && System.nanoTime() < deadline) {
+        while (!text(out).contains(expected) && System.nanoTime() < deadline) {
             TimeUnit.MILLISECONDS.sleep(50);
         }
-        assertThat(out.toString()).contains(expected);
+        assertThat(text(out)).contains(expected);
     }
 
     private String register(String name) {
@@ -380,6 +385,6 @@ class CliTest {
         StringWriter err = new StringWriter();
         int code = Cli.run(url, new ByteArrayInputStream(stdin.getBytes(StandardCharsets.UTF_8)),
                 new PrintWriter(out), new PrintWriter(err), args);
-        return new Result(code, out.toString(), err.toString());
+        return new Result(code, text(out), text(err));
     }
 }
