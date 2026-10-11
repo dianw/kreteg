@@ -77,8 +77,8 @@ class ConversationToolsTest {
         String bob = ConversationEventsTest.register("bob-" + suffix);
         String conversation = ConversationEventsTest.create(alice, "status tool", bob);
         McpStreamableTestClient client = McpAssured.newConnectedStreamableClient();
-        URI events = URI.create(RestAssured.baseURI + ":" + RestAssured.port + "/api/conversations/" + conversation
-                + "/events");
+        URI events = URI.create(RestAssured.baseURI + ":" + RestAssured.port + "/api/events?conversation="
+                + conversation);
 
         try (ConversationEventsTest.SseStream stream = new ConversationEventsTest.SseStream(events, Map.of())) {
             client.when()

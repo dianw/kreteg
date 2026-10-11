@@ -309,8 +309,8 @@ class CliTest {
 
     /** The status line the event stream replays for the conversation, or null when it replays none within 2s. */
     private String replayedStatus(String conversation) throws Exception {
-        HttpRequest request = HttpRequest.newBuilder(url.toURI().resolve("api/conversations/" + conversation
-                + "/events?since=" + Long.MAX_VALUE)).build();
+        HttpRequest request = HttpRequest.newBuilder(url.toURI().resolve("api/events?conversation=" + conversation
+                + "&since=" + Long.MAX_VALUE)).build();
         HttpResponse<Stream<String>> response = HttpClient.newHttpClient()
                 .send(request, HttpResponse.BodyHandlers.ofLines());
         BlockingQueue<String> lines = new LinkedBlockingQueue<>();
@@ -323,8 +323,11 @@ class CliTest {
         });
         try {
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            String event = null;
             for (String line; (line = lines.poll(deadline - System.nanoTime(), TimeUnit.NANOSECONDS)) != null; ) {
-                if (line.startsWith("data:")) {
+                if (line.startsWith("event:")) {
+                    event = line.substring("event:".length()).strip();
+                } else if (line.startsWith("data:") && "status".equals(event)) {
                     return Hub.JSON.readTree(line.substring("data:".length())).path("text").asText(null);
                 }
             }

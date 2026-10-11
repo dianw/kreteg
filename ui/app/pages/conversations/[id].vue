@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ConversationDetail, MemberStatus, Message, Participant } from '~/types/kreteg'
+import type { ConversationDetail, MemberStatus, Message } from '~/types/kreteg'
 
 const route = useRoute()
 const id = route.params.id as string
@@ -14,10 +14,11 @@ const isMember = computed(() => !!identity.name.value && !!conversation.value?.m
 const scroller = useTemplateRef<HTMLElement>('scroller')
 
 /**
- * True while the event stream keeps failing. Messages, members and read positions then come from polling, as they
- * did before the stream existed; otherwise the stream pushes them.
+ * The tab's event stream, which this page points at the conversation. While it keeps failing (`polling`), messages,
+ * members and read positions come from polling, as they did before the stream existed.
  */
-const polling = ref(false)
+const hub = useHub()
+const polling = hub.polling
 
 /** Per member, the higher position of the two: positions only move forward, so a lower one is older news. */
 function maxSeqs(a: Record<string, number> = {}, b: Record<string, number> = {}) {
@@ -44,11 +45,8 @@ function refreshConversation() {
   loadConversation().catch(() => {})
 }
 
-// Statuses tell whether an agent that owes an answer is still around
-const participants = ref(new Map<string, Participant>())
-usePolling(async () => {
-  participants.value = new Map((await api.participants()).map(p => [p.name, p]))
-}, 5000)
+// Presence tells whether an agent that owes an answer is still around; kept current by the event stream
+const participants = useParticipants().byName
 
 /** Agents read through their inbox, so they have read positions; people read through the UI's history and don't. */
 function isAgent(name: string) {
@@ -179,7 +177,7 @@ async function loadLatest() {
     if (!unmounted && !notFound.value) setTimeout(loadLatest, 2000)
     return
   }
-  events.connect()
+  hub.follow(id, lastSeq)
   await nextTick()
   scrollToBottom()
   maybeLoadOlder()
@@ -188,6 +186,7 @@ onMounted(() => {
   refreshConversation()
   loadLatest()
 })
+onBeforeUnmount(() => hub.unfollow(id))
 
 const history = usePolling(async () => {
   let page: Message[]
@@ -201,37 +200,32 @@ const history = usePolling(async () => {
 const STATUS_TTL_MS = 10 * 60_000
 const statuses = ref(new Map<string, MemberStatus>())
 
-const events = useConversationEvents(id, {
-  since: lastSeq,
-  message: m => addMessages([m]),
-  status: (s) => {
-    if (s.text) statuses.value.set(s.name, s)
-    else statuses.value.delete(s.name)
-  },
-  receipt: (r) => {
-    const c = conversation.value
-    if (!c) return
-    c.readSeq = maxSeqs(c.readSeq, { [r.name]: r.readSeq })
-    c.doneSeq = maxSeqs(c.doneSeq, { [r.name]: r.doneSeq })
-  },
-  members: (members) => {
-    if (conversation.value) conversation.value.members = members
-  },
-  open: () => {
-    statuses.value = new Map()
-    refreshConversation()
-  },
-  fallback: (on) => {
-    polling.value = on
-    // Statuses come only through the stream; the age check below would hide them, but not as soon as this
-    if (on) statuses.value = new Map()
-  },
+hub.onConversation(id, 'message', m => addMessages([m]))
+hub.onConversation(id, 'status', (s) => {
+  if (s.text) statuses.value.set(s.name, s)
+  else statuses.value.delete(s.name)
 })
+hub.onConversation(id, 'receipt', (r) => {
+  const c = conversation.value
+  if (!c) return
+  c.readSeq = maxSeqs(c.readSeq, { [r.name]: r.readSeq })
+  c.doneSeq = maxSeqs(c.doneSeq, { [r.name]: r.doneSeq })
+})
+hub.onConversation(id, 'members', ({ members }) => {
+  if (conversation.value) conversation.value.members = members
+})
+// Only messages and statuses are replayed when the stream opens, so the rest is fetched again, and statuses held from
+// before are dropped: the replay sends the ones that still hold
+hub.onOpen((followed) => {
+  if (followed !== id) return
+  statuses.value = new Map()
+  refreshConversation()
+})
+// Statuses come only through the stream; the age check below would hide them, but not as soon as this
+watch(polling, on => on && (statuses.value = new Map()))
 
 /** Ticks so that statuses and asks age out while nothing else changes. */
-const now = ref(Date.now())
-const clock = setInterval(() => (now.value = Date.now()), 15_000)
-onBeforeUnmount(() => clearInterval(clock))
+const now = useNow()
 
 function statusOf(name: string) {
   const s = statuses.value.get(name)

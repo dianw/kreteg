@@ -27,7 +27,7 @@ import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
 import io.restassured.path.json.JsonPath;
 
-/** The SSE stream at {@code /api/conversations/{id}/events} and the status lines it carries, read as a browser would. */
+/** The SSE stream at {@code /api/events} and the status lines it carries, read as a browser would. */
 @QuarkusTest
 class ConversationEventsTest {
 
@@ -82,12 +82,12 @@ class ConversationEventsTest {
             return response.headers().firstValue("Content-Type").orElse("");
         }
 
-        /** The next event that isn't a ping, failing after 10 seconds. */
+        /** The next conversation event, skipping pings and hub-wide events, failing after 10 seconds. */
         SseEvent next() throws InterruptedException {
             while (true) {
                 SseEvent event = events.poll(10, TimeUnit.SECONDS);
                 assertThat(event).as("an event within 10s").isNotNull();
-                if (event.comment() == null) {
+                if (event.comment() == null && !HUB.contains(event.event())) {
                     return event;
                 }
             }
@@ -105,10 +105,32 @@ class ConversationEventsTest {
             }
         }
 
-        /** Nothing but pings arrives for a short while. */
+        /** The next hub-wide event of {@code type} about {@code name}, skipping everything else, within 10s. */
+        SseEvent nextHub(String type, String name) throws InterruptedException {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (true) {
+                SseEvent event = events.poll(deadline - System.nanoTime(), TimeUnit.NANOSECONDS);
+                assertThat(event).as("a %s event about %s within 10s", type, name).isNotNull();
+                if (type.equals(event.event()) && name.equals(event.json().getString(
+                        type.equals("conversation") ? "id" : "name"))) {
+                    return event;
+                }
+            }
+        }
+
+        /** No hub-wide event of {@code type} about {@code name} arrives within {@code millis}. */
+        void assertNoHub(String type, String name, long millis) throws InterruptedException {
+            long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(millis);
+            for (SseEvent event; (event = events.poll(deadline - System.nanoTime(), TimeUnit.NANOSECONDS)) != null; ) {
+                assertThat(type.equals(event.event()) && name.equals(event.json().getString("name")))
+                        .as("no %s event about %s, got %s", type, name, event).isFalse();
+            }
+        }
+
+        /** No conversation event arrives for a short while (pings and hub-wide events don't count). */
         void assertQuiet() throws InterruptedException {
             SseEvent event = events.poll(500, TimeUnit.MILLISECONDS);
-            while (event != null && event.comment() != null) {
+            while (event != null && (event.comment() != null || HUB.contains(event.event()))) {
                 event = events.poll(500, TimeUnit.MILLISECONDS);
             }
             assertThat(event).isNull();
@@ -120,6 +142,8 @@ class ConversationEventsTest {
             reader.interrupt();
         }
     }
+
+    static final java.util.Set<String> HUB = java.util.Set.of("conversation", "participant");
 
     @TestHTTPResource("/")
     URL url;
@@ -150,7 +174,7 @@ class ConversationEventsTest {
         long second = send(alice, conversation, "two", List.of()).getLong("seq");
         status(bob, conversation, "reading the spec").then().statusCode(204);
 
-        SseStream stream = open(conversation, "?since=" + first, Map.of());
+        SseStream stream = open(conversation, "&since=" + first, Map.of());
         assertThat(stream.status()).isEqualTo(200);
         assertThat(stream.contentType()).startsWith("text/event-stream");
 
@@ -182,7 +206,7 @@ class ConversationEventsTest {
         long first = send(alice, conversation, "one", List.of()).getLong("seq");
         send(alice, conversation, "two", List.of());
 
-        SseStream stream = open(conversation, "?since=0", Map.of("Last-Event-ID", Long.toString(first)));
+        SseStream stream = open(conversation, "&since=0", Map.of("Last-Event-ID", Long.toString(first)));
 
         assertThat(stream.next().json().getString("text")).isEqualTo("two");
         stream.assertQuiet();
@@ -256,7 +280,7 @@ class ConversationEventsTest {
         assertThat(stream.next().json().getString("text")).isEqualTo("green");
 
         // A new stream replays no status any more
-        SseStream again = open(conversation, "?since=" + Long.MAX_VALUE, Map.of());
+        SseStream again = open(conversation, "&since=" + Long.MAX_VALUE, Map.of());
         again.assertQuiet();
     }
 
@@ -291,9 +315,86 @@ class ConversationEventsTest {
         assertThat(stream.status()).isEqualTo(404);
     }
 
+    @Test
+    void theOldPerConversationPathIsGone() throws Exception {
+        String conversation = create(alice, "old path", bob);
+
+        SseStream stream = track(new SseStream(url.toURI().resolve("api/conversations/" + conversation + "/events"),
+                Map.of()));
+
+        assertThat(stream.status()).isEqualTo(404);
+    }
+
+    @Test
+    void hubEventsForConversationsWithoutFollowingOne() throws Exception {
+        SseStream hub = openHub();
+
+        String conversation = create(alice, "hub", bob);
+        SseEvent created = hub.nextHub("conversation", conversation);
+        // The same JSON as an item of GET /api/conversations
+        assertThat(created.json().getMap("$")).isEqualTo(given().queryParam("member", alice)
+                .when().get("/api/conversations").then().statusCode(200)
+                .extract().jsonPath().getMap("find { it.id == '" + conversation + "' }"));
+
+        long sentAt = send(alice, conversation, "bump", List.of()).getLong("createdAt");
+        assertThat(hub.nextHub("conversation", conversation).json().getLong("lastActivityAt")).isEqualTo(sentAt);
+
+        given().contentType(ContentType.JSON).body(Map.of("name", carol))
+                .when().post("/api/conversations/{id}/members", conversation).then().statusCode(200);
+        assertThat(hub.nextHub("conversation", conversation).json().getList("members", String.class))
+                .containsExactlyInAnyOrder(alice, bob, carol);
+
+        given().when().delete("/api/conversations/{id}/members/{name}", conversation, carol).then().statusCode(204);
+        assertThat(hub.nextHub("conversation", conversation).json().getList("members", String.class))
+                .containsExactlyInAnyOrder(alice, bob);
+
+        // Not following the conversation: none of its own events
+        hub.assertQuiet();
+    }
+
+    @Test
+    void participantEventOnRegisterThenThrottled() throws Exception {
+        SseStream hub = openHub();
+        String dave = "dave-" + UUID.randomUUID().toString().substring(0, 8);
+
+        register(dave);
+        SseEvent registered = hub.nextHub("participant", dave);
+        assertThat(registered.json().getString("description")).isEqualTo("test");
+        assertThat(registered.json().getString("status")).isEqualTo("live");
+        assertThat(registered.json().getLong("lastSeen")).isPositive();
+        // The same JSON as an item of GET /api/participants, apart from the clock-derived fields
+        Map<String, Object> listed = given().when().get("/api/participants").then().statusCode(200)
+                .extract().jsonPath().getMap("find { it.name == '" + dave + "' }");
+        assertThat(registered.json().getMap("$").keySet()).isEqualTo(listed.keySet());
+
+        // Touching last seen inside the window sends nothing now: the trailing event comes at its end (20s here),
+        // which ConversationStatusExpiryTest checks with a one-second window
+        given().queryParam("wait", 0).when().get("/api/participants/{name}/inbox", dave).then().statusCode(200);
+        hub.assertNoHub("participant", dave, 1500);
+    }
+
+    @Test
+    void conversationEventsOnlyWhenFollowing() throws Exception {
+        String conversation = create(alice, "follow", bob);
+        SseStream hub = openHub();
+        SseStream following = open(conversation, "", Map.of());
+
+        send(alice, conversation, "hello", List.of());
+
+        assertThat(following.next().event()).isEqualTo("message");
+        assertThat(hub.nextHub("conversation", conversation)).isNotNull();
+        hub.assertQuiet();
+    }
+
     private SseStream open(String conversation, String query, Map<String, String> headers) throws Exception {
-        SseStream stream = new SseStream(url.toURI().resolve("api/conversations/" + conversation + "/events" + query),
-                headers);
+        return track(new SseStream(url.toURI().resolve("api/events?conversation=" + conversation + query), headers));
+    }
+
+    private SseStream openHub() throws Exception {
+        return track(new SseStream(url.toURI().resolve("api/events"), Map.of()));
+    }
+
+    private SseStream track(SseStream stream) {
         streams.add(stream);
         return stream;
     }

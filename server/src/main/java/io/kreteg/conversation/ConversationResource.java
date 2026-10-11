@@ -5,6 +5,7 @@ import static io.kreteg.conversation.ConversationException.Reason.INVALID;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
@@ -174,21 +175,26 @@ public class ConversationResource {
     }
 
     /**
-     * The conversation as a stream of server-sent events: first the messages after {@code since} (or after the
-     * {@code Last-Event-ID} a reconnecting {@code EventSource} sends, which wins), then the current status lines, then
-     * {@code message}, {@code status}, {@code receipt} and {@code members} events as they happen, with a ping comment
-     * every {@code kreteg.events.ping-interval}. Blocking, because the replay reads the database.
+     * The hub as a stream of server-sent events, one per browser tab: {@code conversation} and {@code participant}
+     * events for the whole hub, and with {@code conversation}, that conversation's messages after {@code since} (or
+     * after the {@code Last-Event-ID} a reconnecting {@code EventSource} sends, which wins), its current status lines,
+     * and then its {@code message}, {@code status}, {@code receipt} and {@code members} events as they happen. A ping
+     * comment goes out every {@code kreteg.events.ping-interval}. Hub-wide events have no replay: clients fetch the
+     * conversation and participant lists when the stream opens. Blocking, because the replay reads the database.
      */
     @GET
-    @Path("/conversations/{id}/events")
+    @Path("/events")
     @Produces(MediaType.SERVER_SENT_EVENTS)
     @RestStreamElementType(MediaType.TEXT_PLAIN)
     @Blocking
-    public Multi<OutboundSseEvent> events(@PathParam("id") String id,
+    public Multi<OutboundSseEvent> events(@QueryParam("conversation") String conversationId,
                                           @QueryParam("since") Long since,
                                           @HeaderParam("Last-Event-ID") String lastEventId,
                                           @Context Sse sse) {
-        service.conversation(id);  // 404 before the stream starts
+        String id = conversationId == null || conversationId.isBlank() ? null : conversationId.strip();
+        if (id != null) {
+            service.conversation(id);  // 404 before the stream starts
+        }
         long after = lastEventId != null && lastEventId.strip().matches("\\d+")
                 ? Long.parseLong(lastEventId.strip())
                 : since == null ? 0 : Math.max(0, since);
@@ -196,35 +202,47 @@ public class ConversationResource {
         // Subscribe before reading the replay, so nothing committed in between is missed; what the replay already
         // holds is dropped from the live side by seq
         UnicastProcessor<Event> live = UnicastProcessor.create();
-        AutoCloseable subscription = events.subscribe(id, event -> {
+        Consumer<Event> enqueue = event -> {
             synchronized (live) {
                 live.onNext(event);
             }
-        });
+        };
+        List<AutoCloseable> subscriptions = new ArrayList<>();
+        subscriptions.add(events.subscribeHub(enqueue));
+        if (id != null) {
+            subscriptions.add(events.subscribe(id, enqueue));
+        }
+        AutoCloseable subscription = () -> {
+            for (AutoCloseable s : subscriptions) {
+                s.close();
+            }
+        };
         List<Event> replay = new ArrayList<>();
         long last = after;
-        try {
-            for (List<Message> page = service.history(id, after, REPLAY_PAGE); !page.isEmpty();
-                    page = service.history(id, last, REPLAY_PAGE)) {
-                for (Message message : page) {
-                    replay.add(Event.message(message));
-                    last = message.seq();
+        if (id != null) {
+            try {
+                for (List<Message> page = service.history(id, after, REPLAY_PAGE); !page.isEmpty();
+                        page = service.history(id, last, REPLAY_PAGE)) {
+                    for (Message message : page) {
+                        replay.add(Event.message(message));
+                        last = message.seq();
+                    }
                 }
+                service.statuses(id).forEach(status -> replay.add(Event.status(status)));
+            } catch (RuntimeException e) {
+                // No stream will ever be returned to close it
+                close(subscription);
+                throw e;
             }
-            service.statuses(id).forEach(status -> replay.add(Event.status(status)));
-        } catch (RuntimeException e) {
-            // No stream will ever be returned to close it
-            close(subscription);
-            throw e;
         }
         long replayedTo = last;
 
-        Multi<Event> conversation = Multi.createBy().concatenating().streams(
+        Multi<Event> stream = Multi.createBy().concatenating().streams(
                 Multi.createFrom().iterable(replay),
                 live.filter(event -> event.id() == null || event.id() > replayedTo));
         Multi<OutboundSseEvent> pings = Multi.createFrom().ticks().every(pingInterval)
                 .map(tick -> sse.newEventBuilder().comment("ping").build());
-        return Multi.createBy().merging().streams(conversation.map(event -> toSse(sse, event)), pings)
+        return Multi.createBy().merging().streams(stream.map(event -> toSse(sse, event)), pings)
                 .onTermination().invoke(() -> close(subscription));
     }
 

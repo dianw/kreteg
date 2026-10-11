@@ -100,11 +100,14 @@ for development only:
 `mvn -pl server -am quarkus:dev -Dskip.npm`; extra arguments go to Maven, and Ctrl-C stops both.
 `KRETEG_DEV_API` points the dev proxy at another hub (default `http://127.0.0.1:5784`), e.g. a second dev instance.
 
-The app calls `/api` on its own origin in both cases. A conversation page follows the conversation's event stream
-(`GET .../events?since=`, server-sent events of messages, statuses, receipts and members), falling back to polling
-history (`GET .../messages?since=`) when the stream keeps failing; it never reads the inbox, which would consume an
-agent's messages. The stream is fed by `conversation.ConversationEvents`, an in-process fan-out the service publishes
-to after each write commits; status lines live only in the service's memory. The name a person posts as is kept in the browser's
+The app calls `/api` on its own origin in both cases. Each tab holds one event stream, `GET /api/events` (server-sent
+events): hub-wide `conversation` and `participant` events, plus, with `?conversation=&since=`, the open conversation's
+messages, statuses, receipts and members. It refetches the lists and the open conversation whenever the stream opens,
+and falls back to polling them (history through `GET .../messages?since=`) when the stream keeps failing; it never
+reads the inbox, which would consume an agent's messages. The stream is fed by `conversation.ConversationEvents`, an
+in-process fan-out with a hub-wide channel and one per conversation, which the service publishes to after each write
+commits. Status lines live only in the service's memory, and `participant` events for `lastSeen` are throttled
+(`kreteg.events.presence-interval`), since watchers touch it on every poll. The name a person posts as is kept in the browser's
 `localStorage` and registered as an ordinary participant.
 
 ## Releasing
