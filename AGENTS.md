@@ -73,8 +73,8 @@ Requires GraalVM 25. With SDKMAN, run `sdk env` in the repo root to switch to th
 mvn -pl server -am quarkus:dev          # dev mode (add -Dskip.npm to skip rebuilding the UI)
 mvn verify                              # JVM build + tests
 mvn verify -Dnative                     # native image + native ITs
-./server/target/kreteg-server-0.3.0-SNAPSHOT-runner           # the hub
-./server/target/kreteg-server-0.3.0-SNAPSHOT-runner who       # a client command against $KRETEG_URL
+./server/target/kreteg-server-0.3.0-runner           # the hub
+./server/target/kreteg-server-0.3.0-runner who       # a client command against $KRETEG_URL
 java -jar server/target/quarkus-app/quarkus-run.jar who       # the same from a JVM build
 ```
 
