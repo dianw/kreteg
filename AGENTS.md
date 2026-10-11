@@ -3,21 +3,23 @@
 What the project is for is in [README.md](README.md). This file covers how it is built.
 
 A hub where agent sessions from any harness (Claude Code, OpenCode, Codex, ...) hold multi-party conversations.
-Agents use MCP over Streamable HTTP; scripts and the UI use a small REST API. Quarkus, GraalVM native image, SQLite,
-and a Nuxt single-page app for the UI.
+Agents use the `kreteg` command (the same binary's client subcommands) and scripts and the UI use the REST API it
+calls; clients without a shell use MCP over Streamable HTTP. Quarkus, GraalVM native image, SQLite, and a Nuxt
+single-page app for the UI.
 
 ```
 kreteg/
 ├── pom.xml        # parent / aggregator
 ├── dev.sh         # development: Quarkus dev mode + Nuxt dev server
-├── install.sh     # user install from GitHub Releases: binary, user service, skill, MCP registration
-├── uninstall.sh
+├── install.sh     # user install from GitHub Releases: binary, user service, skill, Claude Code permission rule
+├── install.ps1    # the same for Windows
+├── uninstall.sh   # and uninstall.ps1
 ├── .github/workflows/
 │   ├── ci.yml     # PRs and main: JVM tests, test report, JaCoCo coverage comment
 │   └── release.yml  # v* tags: native binaries per OS/CPU, published as a GitHub Release
-├── client/        # harness setup, agent skill, inbox watch script
+├── client/        # harness setup and the agent skill
 ├── ui/            # Nuxt SPA, built to static files and packaged as the kreteg-ui jar
-└── server/        # Quarkus app: MCP endpoint, REST API; serves the kreteg-ui jar
+└── server/        # Quarkus app: MCP endpoint, REST API, CLI; serves the kreteg-ui jar
 ```
 
 ## Package layout
@@ -28,8 +30,16 @@ Top-level packages under `io.kreteg` follow business functions, so each can late
 |---|---|
 | `conversation` | Participants, conversations, message log and inboxes; MCP tools and REST API over them |
 | `core` | Infrastructure that belongs to no business function (e.g. the shared `Jdbi`) |
+| `cli` | The client subcommands (`kreteg send`, `kreteg watch`, ...): picocli over the REST API, no CDI |
 
-Business packages must not import each other; they share only `core`.
+Business packages must not import each other; they share only `core`. `cli` is a client like any other and imports
+neither: it knows the server only through HTTP and JSON.
+
+`io.kreteg.KretegMain` decides what the binary is before Quarkus boots: no arguments, `serve [args]`, or a first
+argument starting with `-D` run the hub; anything else runs `cli.Cli`, so client commands never open the database or
+the port. The service units installed by the install scripts run `kreteg serve`. Picocli's reflection config for the
+native image comes from the `picocli-codegen` annotation processor, not from `quarkus-picocli`, which would boot the
+whole app for every command.
 
 Dependency injection is constructor-only: dependencies are `private final` fields set by a single `@Inject`
 constructor, and config values are `@ConfigProperty` constructor parameters. The one exception is `@QuarkusTest`
@@ -40,7 +50,7 @@ classes, where Quarkus supports only field injection.
 | Path | Purpose |
 |---|---|
 | `/mcp` | MCP over Streamable HTTP: the agent contract (`register`, `who`, `create_conversation`, `join`, `leave`, `my_conversations`, `send`, `done`, `inbox`, `history`) |
-| `/api/...` | REST for the inbox watch loop, scripts and the UI; see [client/README.md](client/README.md) |
+| `/api/...` | REST for the `kreteg` command, scripts and the UI; see [client/README.md](client/README.md) |
 | `GET /` | Static UI from the `kreteg-ui` jar (`META-INF/resources`); other page paths fall back to `index.html` (`core.web.SpaFallback`) |
 
 A message with `to` reaches the inboxes of the members it names, who are expected to answer; a message without `to`
@@ -56,8 +66,13 @@ Requires GraalVM 25. With SDKMAN, run `sdk env` in the repo root to switch to th
 mvn -pl server -am quarkus:dev          # dev mode (add -Dskip.npm to skip rebuilding the UI)
 mvn verify                              # JVM build + tests
 mvn verify -Dnative                     # native image + native ITs
-./server/target/kreteg-server-0.3.0-SNAPSHOT-runner
+./server/target/kreteg-server-0.3.0-SNAPSHOT-runner           # the hub
+./server/target/kreteg-server-0.3.0-SNAPSHOT-runner who       # a client command against $KRETEG_URL
+java -jar server/target/quarkus-app/quarkus-run.jar who       # the same from a JVM build
 ```
+
+`CliTest` runs the commands in-process against the test server; `CliIT` runs the built artifact (native executable
+or jar, from `target/quarkus-artifact.properties`) as a subprocess.
 
 Maven builds the UI with its own Node (into `ui/target/node`, version pinned in `ui/pom.xml` and `ui/.nvmrc`).
 `-Dskip.npm` skips the npm steps and packages whatever `ui/.output/public` already holds.
@@ -85,7 +100,7 @@ never the inbox, which would consume an agent's messages. The name a person post
 
 GraalVM cannot cross-compile, so `release.yml` builds each binary on its own runner (Linux amd64/arm64, macOS
 arm64/amd64, Windows amd64) and runs the native ITs there. Pushing a `v*` tag publishes a GitHub Release with the
-binaries, `SKILL.md`, `kreteg-watch` and `SHA256SUMS`, which is what `install.sh` downloads; a tag containing `-`
+binaries, `SKILL.md` and `SHA256SUMS`, which is what `install.sh` downloads; a tag containing `-`
 (e.g. `v0.1.0-rc.1`) becomes a pre-release, which `latest` skips. Run the workflow manually to build without
 releasing. The UI is built once on Linux and shared with every leg (`-Dskip.npm`), because `nuxt generate` fails on
 Windows.

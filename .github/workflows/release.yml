@@ -84,7 +84,7 @@ jobs:
           merge-multiple: true
       - name: Add client files and checksums
         run: |
-          cp client/skill/SKILL.md client/kreteg-watch dist/
+          cp client/skill/SKILL.md dist/
           cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
       - name: Publish release
         env:

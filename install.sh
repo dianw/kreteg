@@ -1,13 +1,13 @@
 #!/bin/sh
-# Install Kreteg for the current user: the server binary, a background service, the agent skill with its watch
-# script, and the MCP registration for Claude Code. Needs no administrator rights. Re-run it to upgrade.
+# Install Kreteg for the current user: the binary (hub and command-line client in one), a background service, the
+# agent skill, and a Claude Code permission rule for the client. Needs no administrator rights. Re-run it to upgrade.
 #
 #   curl -fsSL https://raw.githubusercontent.com/dianw/kreteg/main/install.sh | sh
 #
 # Env: KRETEG_VERSION     release tag to install (default: latest, e.g. v0.1.0)
 #      KRETEG_BIN_DIR     where the binary goes (default: ~/.local/bin)
 #      KRETEG_NO_SERVICE  set to 1 to skip the background service
-#      KRETEG_NO_MCP      set to 1 to skip registering the MCP server with Claude Code
+#      KRETEG_MCP         set to 1 to also register the MCP server with Claude Code, for agents without a shell
 set -eu
 
 REPO="dianw/kreteg"
@@ -23,7 +23,7 @@ detect_platform() {
   case "$(uname -s)" in
     Darwin) os=darwin ;;
     Linux) os=linux ;;
-    *) die "unsupported OS $(uname -s); on Windows download kreteg-windows-amd64.exe from https://github.com/$REPO/releases" ;;
+    *) die "unsupported OS $(uname -s); on Windows run install.ps1 in PowerShell instead" ;;
   esac
   case "$(uname -m)" in
     x86_64 | amd64) arch=amd64 ;;
@@ -45,10 +45,10 @@ download() {
   else base="https://github.com/$REPO/releases/download/$version"
   fi
   say "downloading $asset ($version)"
-  for f in "$asset" SHA256SUMS SKILL.md kreteg-watch; do
+  for f in "$asset" SHA256SUMS SKILL.md; do
     curl -fsSL -o "$tmp/$f" "$base/$f" || die "cannot download $base/$f"
   done
-  for f in "$asset" SKILL.md kreteg-watch; do
+  for f in "$asset" SKILL.md; do
     expected=$(awk -v f="$f" '$2 == f || $2 == "*" f { print $1 }' "$tmp/SHA256SUMS")
     [ -n "$expected" ] || die "$f is missing from SHA256SUMS"
     [ "$(sha256 "$tmp/$f")" = "$expected" ] || die "checksum mismatch for $f"
@@ -71,7 +71,7 @@ install_binary() {
   say "installed $bin_dir/kreteg"
   case ":$PATH:" in
     *":$bin_dir:"*) ;;
-    *) warn "$bin_dir is not on PATH; add: export PATH=\"$bin_dir:\$PATH\"" ;;
+    *) warn "$bin_dir is not on PATH, and agents run kreteg from PATH; add: export PATH=\"$bin_dir:\$PATH\"" ;;
   esac
 }
 
@@ -84,7 +84,7 @@ install_launchd() {
 <plist version="1.0">
 <dict>
   <key>Label</key><string>$LABEL</string>
-  <key>ProgramArguments</key><array><string>$bin_dir/kreteg</string></array>
+  <key>ProgramArguments</key><array><string>$bin_dir/kreteg</string><string>serve</string></array>
   <key>EnvironmentVariables</key>
   <dict>
     <key>KRETEG_DB_PATH</key><string>$data_dir/kreteg.db</string>
@@ -106,7 +106,7 @@ EOF
 install_systemd() {
   if ! has systemctl || ! systemctl --user show-environment >/dev/null 2>&1; then
     warn "no systemd user session here; start the server yourself:"
-    warn "  KRETEG_DB_PATH=\"$data_dir/kreteg.db\" QUARKUS_HTTP_HOST=127.0.0.1 \"$bin_dir/kreteg\""
+    warn "  KRETEG_DB_PATH=\"$data_dir/kreteg.db\" QUARKUS_HTTP_HOST=127.0.0.1 \"$bin_dir/kreteg\" serve"
     return 1
   fi
   unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
@@ -116,7 +116,7 @@ install_systemd() {
 Description=Kreteg conversation hub for agent sessions
 
 [Service]
-ExecStart="$bin_dir/kreteg"
+ExecStart="$bin_dir/kreteg" serve
 WorkingDirectory=$data_dir
 Environment="KRETEG_DB_PATH=$data_dir/kreteg.db"
 Environment=QUARKUS_HTTP_HOST=127.0.0.1
@@ -149,10 +149,55 @@ install_skill() {
   skill_dir="$HOME/.claude/skills/kreteg"
   mkdir -p "$skill_dir"
   cp "$tmp/SKILL.md" "$skill_dir/SKILL.md"
-  cp "$tmp/kreteg-watch" "$skill_dir/kreteg-watch"
-  chmod 755 "$skill_dir/kreteg-watch"
-  say "installed skill and watch script in $skill_dir"
-  has jq || warn "kreteg-watch needs jq; install it with your package manager"
+  # The bash + curl + jq watch script was replaced by 'kreteg watch' in 0.3.0. Sessions that loaded the old skill
+  # re-arm their watch with its path, so on upgrade it becomes a stand-in for the new command instead of vanishing.
+  # A new file moved into place: a running copy keeps its inode (bash reads scripts while running them), and a
+  # symlink is replaced rather than written through. Remove in 0.5.0.
+  if [ -e "$skill_dir/kreteg-watch" ] || [ -L "$skill_dir/kreteg-watch" ]; then
+    cat >"$skill_dir/kreteg-watch.new" <<EOF
+#!/bin/sh
+# Kept for sessions that loaded the pre-0.3.0 skill; new sessions run 'kreteg watch' directly
+exec "$bin_dir/kreteg" watch "\$@"
+EOF
+    chmod 755 "$skill_dir/kreteg-watch.new"
+    mv -f "$skill_dir/kreteg-watch.new" "$skill_dir/kreteg-watch"
+  fi
+  say "installed skill in $skill_dir"
+}
+
+# Lets Claude Code agents run the client without a permission prompt for every message
+allow_cli() {
+  settings="$HOME/.claude/settings.json"
+  rule='Bash(kreteg:*)'
+  hint="to let Claude Code run kreteg without asking, add \"$rule\" to permissions.allow in $settings"
+  if ! has jq; then
+    say "$hint"
+    return 0
+  fi
+  if [ -L "$settings" ]; then
+    say "$hint (it is a symlink, so it was left alone)"
+    return 0
+  fi
+  if [ -f "$settings" ]; then
+    if ! jq -e 'type == "object"' "$settings" >/dev/null 2>&1; then
+      warn "$settings is not a JSON object; left it alone"
+      say "$hint"
+      return 0
+    fi
+    jq -e --arg r "$rule" '(.permissions.allow // []) | index($r)' "$settings" >/dev/null 2>&1 && return 0
+  fi
+  mkdir -p "$HOME/.claude"
+  new="$settings.kreteg-new"
+  if { [ -f "$settings" ] && jq --arg r "$rule" '.permissions.allow = ((.permissions.allow // []) + [$r])' \
+        "$settings" >"$new"; } || { [ ! -f "$settings" ] && jq -n --arg r "$rule" '{permissions: {allow: [$r]}}' >"$new"; }
+  then
+    mv -f "$new" "$settings"
+    say "allowed $rule in $settings"
+  else
+    rm -f "$new"
+    warn "could not update $settings"
+    say "$hint"
+  fi
 }
 
 register_mcp() {
@@ -191,9 +236,14 @@ main() {
     esac
   fi
   install_skill
-  [ "${KRETEG_NO_MCP:-0}" = 1 ] || register_mcp
+  allow_cli
+  if [ "${KRETEG_MCP:-0}" = 1 ]; then
+    register_mcp
+  else
+    say "agents use the kreteg command; for clients without a shell, re-run with KRETEG_MCP=1 to register MCP"
+  fi
 
-  say "done. data: $data_dir"
+  say "done. data: $data_dir; try: kreteg who"
   say "uninstall: curl -fsSL https://raw.githubusercontent.com/$REPO/main/uninstall.sh | sh"
 }
 

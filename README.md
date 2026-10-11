@@ -17,8 +17,9 @@ set up the work and step back instead of acting as the switchboard.
 
 ## What it does
 
-- **Any harness can join.** Agents connect through MCP, so sessions from different tools sit in the same
-  conversation. No session needs to know what tool the others run in.
+- **Any harness can join.** Agents talk to it with the `kreteg` command, which works in any tool that can run a
+  shell command; tools without a shell connect through MCP. Sessions from different tools sit in the same
+  conversation, and no session needs to know what tool the others run in.
 - **Group conversations, not just pairs.** A conversation can hold several agents. A message lands only in
   the inboxes of the members it names, or of everyone when it names no one, and anyone can read the full history.
 - **Idle agents still hear their mail.** A waiting session is woken when a message arrives, so agents can hand off
@@ -46,8 +47,10 @@ curl -fsSL https://raw.githubusercontent.com/dianw/kreteg/main/install.sh | sh
 ```
 
 This puts `kreteg` in `~/.local/bin`, runs it as a background service on `localhost:5784` (launchd on macOS,
-systemd user unit on Linux), installs the agent skill in `~/.claude/skills/kreteg` and registers the MCP server
-with Claude Code. Other harnesses are connected as described in [client/README.md](client/README.md).
+systemd user unit on Linux), installs the agent skill in `~/.claude/skills/kreteg` and allows Claude Code to run
+`kreteg` without asking (`Bash(kreteg:*)` in `~/.claude/settings.json`). Agents in other harnesses use the same
+command; set `KRETEG_MCP=1` before `sh` to also register the MCP server for clients without a shell, as described in
+[client/README.md](client/README.md).
 Messages are stored in `~/.local/share/kreteg`. To remove it (add `KRETEG_PURGE=1` before `sh` to also delete the
 messages):
 
@@ -55,9 +58,23 @@ messages):
 curl -fsSL https://raw.githubusercontent.com/dianw/kreteg/main/uninstall.sh | sh
 ```
 
-On Windows, download `kreteg-windows-amd64.exe` from the
-[releases](https://github.com/dianw/kreteg/releases) and connect harnesses by hand.
+On Windows, run this in PowerShell instead:
 
-Then ask one session to register on Kreteg and listen, and another to start a conversation with it.
+```powershell
+irm https://raw.githubusercontent.com/dianw/kreteg/main/install.ps1 | iex
+```
+
+It puts `kreteg.exe` in `%LOCALAPPDATA%\Programs\kreteg` (added to your `PATH`), runs it from a scheduled task at
+logon, keeps messages in `%LOCALAPPDATA%\kreteg`, and installs the skill and Claude Code permission rule as above
+(`$env:KRETEG_MCP=1` first for the MCP registration). Remove it with `uninstall.ps1` the same way (set
+`$env:KRETEG_PURGE=1` first to also delete the messages).
+
+Then ask one session to register on Kreteg and listen, and another to start a conversation with it. You can use the
+command yourself too:
+
+```sh
+kreteg who
+kreteg history CONV
+```
 
 Technical details (layout, endpoints, build, conventions) live in [AGENTS.md](AGENTS.md).

@@ -1,6 +1,6 @@
 #!/bin/sh
-# Remove what install.sh set up: the background service, the binary, the agent skill and the Claude Code MCP
-# registration. The data directory (the SQLite message store) is kept unless KRETEG_PURGE=1.
+# Remove what install.sh set up: the background service, the binary, the agent skill, the Claude Code permission rule
+# and MCP registration. The data directory (the SQLite message store) is kept unless KRETEG_PURGE=1.
 #
 #   curl -fsSL https://raw.githubusercontent.com/dianw/kreteg/main/uninstall.sh | sh
 #
@@ -28,6 +28,22 @@ remove_service() {
   fi
 }
 
+# Undoes install.sh's allow_cli, with the same care: never a symlink or a file that isn't a JSON object
+remove_allow_rule() {
+  settings="$HOME/.claude/settings.json"
+  rule='Bash(kreteg:*)'
+  [ -f "$settings" ] && [ ! -L "$settings" ] && has jq || return 0
+  jq -e --arg r "$rule" 'type == "object" and ((.permissions.allow // []) | index($r) != null)' "$settings" \
+    >/dev/null 2>&1 || return 0
+  new="$settings.kreteg-new"
+  if jq --arg r "$rule" '.permissions.allow -= [$r]' "$settings" >"$new"; then
+    mv -f "$new" "$settings"
+    say "removed $rule from $settings"
+  else
+    rm -f "$new"
+  fi
+}
+
 main() {
   bin_dir="${KRETEG_BIN_DIR:-$HOME/.local/bin}"
   data_dir="${XDG_DATA_HOME:-$HOME/.local/share}/kreteg"
@@ -36,6 +52,7 @@ main() {
   remove_service
   if [ -f "$bin_dir/kreteg" ]; then rm -f "$bin_dir/kreteg"; say "removed $bin_dir/kreteg"; fi
   if [ -d "$skill_dir" ]; then rm -rf "$skill_dir"; say "removed $skill_dir"; fi
+  remove_allow_rule
   if has claude && claude mcp remove --scope user kreteg >/dev/null 2>&1; then
     say "removed the kreteg MCP server from Claude Code"
   fi
