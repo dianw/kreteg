@@ -27,7 +27,6 @@ import jakarta.inject.Inject;
 
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
-import io.kreteg.conversation.ConversationEvents.Event;
 import io.kreteg.conversation.ConversationEvents.MemberStatus;
 import io.kreteg.conversation.ConversationStore.Positions;
 
@@ -98,7 +97,7 @@ public class ConversationService {
         store.upsertParticipant(name, blankToNull(description));
         Participant participant = store.findParticipant(name).orElseThrow();
         participantPublishedAt.put(name, System.currentTimeMillis());
-        events.publishHub(Event.participant(participant));
+        events.participant(participant);
         return participant;
     }
 
@@ -122,7 +121,7 @@ public class ConversationService {
         String id = "c-" + shortId();
         store.insertConversation(id, title.strip(), me, List.copyOf(all));
         Conversation created = store.findConversation(id).orElseThrow();
-        events.publishHub(Event.conversation(created));
+        events.conversation(created);
         return created;
     }
 
@@ -131,8 +130,8 @@ public class ConversationService {
         requireConversation(conversationId);
         store.addMember(conversationId, me);
         Conversation joined = store.findConversation(conversationId).orElseThrow();
-        events.publish(conversationId, Event.members(joined.members()));
-        events.publishHub(Event.conversation(joined));
+        events.members(conversationId, joined.members());
+        events.conversation(joined);
         return joined;
     }
 
@@ -142,8 +141,8 @@ public class ConversationService {
         store.removeMember(conversationId, me);
         clearStatus(conversationId, me);
         Conversation left = requireConversation(conversationId);
-        events.publish(conversationId, Event.members(left.members()));
-        events.publishHub(Event.conversation(left));
+        events.members(conversationId, left.members());
+        events.conversation(left);
     }
 
     /** Conversations {@code member} belongs to, or every conversation when {@code member} is null. */
@@ -189,11 +188,8 @@ public class ConversationService {
             }
         }
         clearStatus(conversationId, me);
-        events.publish(conversationId, Event.message(message));
-        if (events.hubWatched()) {
-            // Its last activity moved
-            store.findConversation(conversationId).ifPresent(c -> events.publishHub(Event.conversation(c)));
-        }
+        events.message(message);
+        events.conversation(store.findConversation(conversationId).orElseThrow());  // its last activity moved
         return message;
     }
 
@@ -213,7 +209,7 @@ public class ConversationService {
         MemberStatus status = new MemberStatus(me, line.substring(0, Math.min(line.length(), MAX_STATUS_LENGTH)),
                 System.currentTimeMillis());
         statuses.computeIfAbsent(conversationId, k -> new ConcurrentHashMap<>()).put(me, status);
-        events.publish(conversationId, Event.status(status));
+        events.status(conversationId, status);
         timers.schedule(() -> expire(conversationId, status), statusTtl.toMillis(), TimeUnit.MILLISECONDS);
     }
 
@@ -230,15 +226,14 @@ public class ConversationService {
         Map<String, MemberStatus> current = statuses.get(conversationId);
         // Only the status this timer was set for: a newer one has its own timer
         if (current != null && current.remove(status.name(), status)) {
-            events.publish(conversationId, Event.status(new MemberStatus(status.name(), null,
-                    System.currentTimeMillis())));
+            events.status(conversationId, new MemberStatus(status.name(), null, System.currentTimeMillis()));
         }
     }
 
     private void clearStatus(String conversationId, String member) {
         Map<String, MemberStatus> current = statuses.get(conversationId);
         if (current != null && current.remove(member) != null) {
-            events.publish(conversationId, Event.status(new MemberStatus(member, null, System.currentTimeMillis())));
+            events.status(conversationId, new MemberStatus(member, null, System.currentTimeMillis()));
         }
     }
 
@@ -254,7 +249,7 @@ public class ConversationService {
             throw new ConversationException(NOT_FOUND, "No message " + messageId + " in " + conversationId);
         }
         Positions positions = store.markDone(conversationId, me, messageId.strip());
-        events.publish(conversationId, Event.receipt(me, positions.readSeq(), positions.doneSeq()));
+        events.receipt(conversationId, me, positions.readSeq(), positions.doneSeq());
     }
 
     /**
@@ -272,7 +267,7 @@ public class ConversationService {
                 CompletableFuture<Void> signal = waiters.computeIfAbsent(me, k -> new CompletableFuture<>());
                 ConversationStore.Taken taken = store.takeInbox(me, boundedLimit);
                 for (Positions moved : taken.moved()) {
-                    events.publish(moved.conversationId(), Event.receipt(me, moved.readSeq(), moved.doneSeq()));
+                    events.receipt(moved.conversationId(), me, moved.readSeq(), moved.doneSeq());
                 }
                 List<Message> messages = taken.messages();
                 long remaining = deadline - System.nanoTime();
@@ -329,9 +324,6 @@ public class ConversationService {
      * throttle.
      */
     private void touched(String name) {
-        if (!events.hubWatched()) {
-            return;
-        }
         long now = System.currentTimeMillis();
         long throttle = participantThrottle.toMillis();
         long[] wait = {0};
@@ -352,7 +344,7 @@ public class ConversationService {
     }
 
     private void publishParticipant(String name) {
-        store.findParticipant(name).ifPresent(p -> events.publishHub(Event.participant(p)));
+        store.findParticipant(name).ifPresent(events::participant);
     }
 
     private void requireExists(String name) {

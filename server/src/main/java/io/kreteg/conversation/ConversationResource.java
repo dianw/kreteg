@@ -5,7 +5,6 @@ import static io.kreteg.conversation.ConversationException.Reason.INVALID;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.Consumer;
 
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
@@ -26,14 +25,13 @@ import jakarta.ws.rs.sse.Sse;
 
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-
-import io.kreteg.conversation.ConversationEvents.Event;
 import io.quarkus.runtime.annotations.RegisterForReflection;
 import io.smallrye.common.annotation.Blocking;
 import io.smallrye.mutiny.Multi;
 import io.smallrye.mutiny.operators.multi.processors.UnicastProcessor;
+import io.vertx.core.eventbus.EventBus;
+import io.vertx.core.eventbus.MessageConsumer;
+import io.vertx.core.json.JsonObject;
 import org.jboss.resteasy.reactive.RestResponse;
 import org.jboss.resteasy.reactive.RestStreamElementType;
 import org.jboss.resteasy.reactive.server.ServerExceptionMapper;
@@ -75,15 +73,15 @@ public class ConversationResource {
 
     private final ConversationService service;
     private final ConversationEvents events;
-    private final ObjectMapper json;
+    private final EventBus bus;
     private final Duration pingInterval;
 
     @Inject
-    public ConversationResource(ConversationService service, ConversationEvents events, ObjectMapper json,
+    public ConversationResource(ConversationService service, ConversationEvents events, EventBus bus,
                                 @ConfigProperty(name = "kreteg.events.ping-interval") Duration pingInterval) {
         this.service = service;
         this.events = events;
-        this.json = json;
+        this.bus = bus;
         this.pingInterval = pingInterval;
     }
 
@@ -199,72 +197,57 @@ public class ConversationResource {
                 ? Long.parseLong(lastEventId.strip())
                 : since == null ? 0 : Math.max(0, since);
 
-        // Subscribe before reading the replay, so nothing committed in between is missed; what the replay already
+        // Listen before reading the replay, so nothing committed in between is missed; what the replay already
         // holds is dropped from the live side by seq
-        UnicastProcessor<Event> live = UnicastProcessor.create();
-        Consumer<Event> enqueue = event -> {
-            synchronized (live) {
-                live.onNext(event);
-            }
-        };
-        List<AutoCloseable> subscriptions = new ArrayList<>();
-        subscriptions.add(events.subscribeHub(enqueue));
-        if (id != null) {
-            subscriptions.add(events.subscribe(id, enqueue));
+        UnicastProcessor<JsonObject> live = UnicastProcessor.create();
+        List<MessageConsumer<JsonObject>> consumers = new ArrayList<>();
+        for (String address : id == null ? List.of(ConversationEvents.HUB)
+                : List.of(ConversationEvents.HUB, ConversationEvents.address(id))) {
+            consumers.add(bus.<JsonObject>localConsumer(address, message -> {
+                synchronized (live) {
+                    live.onNext(message.body());
+                }
+            }));
         }
-        AutoCloseable subscription = () -> {
-            for (AutoCloseable s : subscriptions) {
-                s.close();
-            }
-        };
-        List<Event> replay = new ArrayList<>();
+        Runnable unsubscribe = () -> consumers.forEach(MessageConsumer::unregister);
+
+        List<JsonObject> replay = new ArrayList<>();
         long last = after;
         if (id != null) {
             try {
                 for (List<Message> page = service.history(id, after, REPLAY_PAGE); !page.isEmpty();
                         page = service.history(id, last, REPLAY_PAGE)) {
                     for (Message message : page) {
-                        replay.add(Event.message(message));
+                        replay.add(events.event("message", message.seq(), message));
                         last = message.seq();
                     }
                 }
-                service.statuses(id).forEach(status -> replay.add(Event.status(status)));
+                service.statuses(id).forEach(status -> replay.add(events.event("status", null, status)));
             } catch (RuntimeException e) {
-                // No stream will ever be returned to close it
-                close(subscription);
+                unsubscribe.run();  // no stream will ever be returned to do it
                 throw e;
             }
         }
         long replayedTo = last;
 
-        Multi<Event> stream = Multi.createBy().concatenating().streams(
+        Multi<JsonObject> stream = Multi.createBy().concatenating().streams(
                 Multi.createFrom().iterable(replay),
-                live.filter(event -> event.id() == null || event.id() > replayedTo));
+                live.filter(event -> event.getLong("id") == null || event.getLong("id") > replayedTo));
         Multi<OutboundSseEvent> pings = Multi.createFrom().ticks().every(pingInterval)
                 .map(tick -> sse.newEventBuilder().comment("ping").build());
         return Multi.createBy().merging().streams(stream.map(event -> toSse(sse, event)), pings)
-                .onTermination().invoke(() -> close(subscription));
+                .onTermination().invoke(unsubscribe);
     }
 
-    private OutboundSseEvent toSse(Sse sse, Event event) {
-        OutboundSseEvent.Builder builder = sse.newEventBuilder().name(event.type());
-        if (event.id() != null) {
-            builder.id(Long.toString(event.id()));
+    private static OutboundSseEvent toSse(Sse sse, JsonObject event) {
+        OutboundSseEvent.Builder builder = sse.newEventBuilder()
+                .name(event.getString("type"))
+                .data(event.getString("data"));
+        Long id = event.getLong("id");
+        if (id != null) {
+            builder.id(Long.toString(id));
         }
-        try {
-            // Serialized here, with the same mapper as the JSON responses, so the data is written as is
-            return builder.data(json.writeValueAsString(event.data())).build();
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException("cannot serialize a " + event.type() + " event", e);
-        }
-    }
-
-    private static void close(AutoCloseable subscription) {
-        try {
-            subscription.close();
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
-        }
+        return builder.build();
     }
 
     @ServerExceptionMapper

@@ -104,9 +104,9 @@ The app calls `/api` on its own origin in both cases. Each tab holds one event s
 events): hub-wide `conversation` and `participant` events, plus, with `?conversation=&since=`, the open conversation's
 messages, statuses, receipts and members. It refetches the lists and the open conversation whenever the stream opens,
 and falls back to polling them (history through `GET .../messages?since=`) when the stream keeps failing; it never
-reads the inbox, which would consume an agent's messages. The stream is fed by `conversation.ConversationEvents`, an
-in-process fan-out with a hub-wide channel and one per conversation, which the service publishes to after each write
-commits. Status lines live only in the service's memory, and `participant` events for `lastSeen` are throttled
+reads the inbox, which would consume an agent's messages. The service publishes to the Vert.x event bus after each write
+commits, through `conversation.ConversationEvents`: hub-wide events on one address and each conversation's on its own,
+already serialized as the REST JSON; each stream listens with local consumers. Status lines live only in the service's memory, and `participant` events for `lastSeen` are throttled
 (`kreteg.events.presence-interval`), since watchers touch it on every poll. The name a person posts as is kept in the browser's
 `localStorage` and registered as an ordinary participant.
 
