@@ -6,6 +6,7 @@ import java.util.List;
 
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.DefaultValue;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.POST;
@@ -39,6 +40,9 @@ public class ConversationResource {
     }
 
     public record SendRequest(String from, String text, List<String> to, String replyTo) {
+    }
+
+    public record DoneRequest(String name) {
     }
 
     /** Only reached through the exception mapper, which native-image analysis doesn't see as a response type. */
@@ -97,10 +101,22 @@ public class ConversationResource {
         return service.join(request.name(), id);
     }
 
+    @DELETE
+    @Path("/conversations/{id}/members/{name}")
+    public void leave(@PathParam("id") String id, @PathParam("name") String name) {
+        service.leave(name, id);
+    }
+
     @POST
     @Path("/conversations/{id}/messages")
     public Message send(@PathParam("id") String id, SendRequest request) {
         return service.send(request.from(), id, request.text(), request.to(), request.replyTo());
+    }
+
+    @POST
+    @Path("/conversations/{id}/messages/{message}/done")
+    public void done(@PathParam("id") String id, @PathParam("message") String message, DoneRequest request) {
+        service.done(request.name(), id, message);
     }
 
     /**

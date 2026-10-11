@@ -142,6 +142,41 @@ class ConversationResourceTest {
     }
 
     @Test
+    void leavingMemberGetsNoMoreMessages() {
+        String conversation = create(alice, "leaving", bob, carol);
+
+        given().when().delete("/api/conversations/{id}/members/{name}", conversation, carol)
+                .then().statusCode(204);
+        send(alice, conversation, Map.of("text", "after carol left"));
+
+        assertThat(inbox(carol, 0).getList("$")).isEmpty();
+        assertThat(given().when().get("/api/conversations/{id}", conversation)
+                .then().statusCode(200)
+                .extract().jsonPath().getList("members", String.class))
+                .containsExactlyInAnyOrder(alice, bob);
+        given().when().delete("/api/conversations/{id}/members/{name}", conversation, carol)
+                .then().statusCode(403);
+    }
+
+    @Test
+    void doneMarksMessageHandled() {
+        String conversation = create(alice, "fyi", bob);
+        JsonPath sent = send(alice, conversation, Map.of("text", "fyi, no reply needed", "to", List.of(bob)));
+
+        given().contentType(ContentType.JSON).body(Map.of("name", bob))
+                .when().post("/api/conversations/{id}/messages/{message}/done", conversation, sent.getString("id"))
+                .then().statusCode(204);
+
+        assertThat(given().when().get("/api/conversations/{id}", conversation)
+                .then().statusCode(200)
+                .extract().jsonPath().getMap("doneSeq", String.class, Long.class))
+                .containsEntry(bob, sent.getLong("seq"));
+        given().contentType(ContentType.JSON).body(Map.of("name", bob))
+                .when().post("/api/conversations/{id}/messages/{message}/done", conversation, "m-missing")
+                .then().statusCode(404);
+    }
+
+    @Test
     void conversationShowsHowFarEachMemberHasRead() {
         String conversation = create(alice, "receipts", bob, carol);
         long seq = send(alice, conversation, Map.of("text", "anyone?")).getLong("seq");
