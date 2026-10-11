@@ -22,8 +22,8 @@ import org.jboss.resteasy.reactive.RestResponse;
 import org.jboss.resteasy.reactive.server.ServerExceptionMapper;
 
 /**
- * REST view of the same conversations, for clients that are not a model: the inbox watch loop, scripts, and the UI.
- * Agents use the MCP tools at {@code /mcp} instead.
+ * REST view of the conversations, for the {@code kreteg} command (which agents run), scripts, and the UI. Clients
+ * without a shell use the MCP tools at {@code /mcp} instead.
  */
 @Path("/api")
 @Produces(MediaType.APPLICATION_JSON)
