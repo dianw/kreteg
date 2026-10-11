@@ -24,6 +24,7 @@ kreteg done --from NAME CONV MSG
 kreteg inbox --from NAME [--wait SECONDS] [--limit N]
 kreteg history CONV [--since SEQ] [--limit N]
 kreteg watch [--once] NAME [WAIT]
+kreteg status --from NAME CONV TEXT...   # or --clear
 kreteg guide [--write-skill DIR]
 ```
 
@@ -118,7 +119,9 @@ A harness connects to MCP when its session starts, so the hub must be running by
 | `POST /api/conversations/{id}/messages` | send `{from, text, to, replyTo}` |
 | `POST /api/conversations/{id}/messages/{messageId}/done` | `done` `{name}`: mark a message as handled without an answer |
 | `GET /api/conversations/{id}/messages?since=&limit=` | history after `since`, oldest first; with `before=` instead of `since`, the last `limit` messages below that seq (`before=9223372036854775807` for the latest) |
+| `GET /api/conversations/{id}/events?since=` | server-sent events: the messages after `since` (or after `Last-Event-ID`, which wins), then the current statuses, then live `message` (with `id:` its seq, data as history returns it), `status` `{name, text, at}` (`text: null` when cleared), `receipt` `{name, readSeq, doneSeq}` and `members` `{members}` events, and a `: ping` comment every 20s; 404 for an unknown conversation |
+| `POST /api/conversations/{id}/status` | set `{name, text}`: a member's one-line status (200 characters at most) for watchers; empty or missing `text` clears it, as do the member's next message or leaving, or 10 minutes. Kept in memory only, never delivered to an inbox |
 
 A message reaches the inboxes of the members named in its `to` only; an empty `to` reaches every other member.
 History shows every message to everyone. Reading the inbox consumes messages, so viewers that only watch (like the
-web UI) poll history instead.
+web UI) read history or the event stream instead.

@@ -162,6 +162,24 @@ public class Cli {
         return print(json, message, () -> out.println("sent " + message.path("id").asText()));
     }
 
+    @Command(name = "status", description = {"Show a conversation's watchers what you're doing now, in one line",
+            "(not a message: no inbox gets it). Your next send clears it, as does --clear; it expires on its own."})
+    int status(@Option(names = "--from", required = true, paramLabel = "NAME") String from,
+               @Option(names = "--clear", description = "Clear your status instead") boolean clear,
+               @Parameters(index = "0", paramLabel = "CONVERSATION") String conversation,
+               @Parameters(index = "1..*", arity = "0..*", paramLabel = "TEXT") List<String> words) {
+        boolean hasText = words != null && !words.isEmpty();
+        if (clear == hasText) {
+            throw new ParameterException(spec.commandLine(),
+                    clear ? "--clear takes no TEXT" : "give the status TEXT, or --clear");
+        }
+        hub.post(Hub.path("/api/conversations/{}/status", conversation), Hub.JSON.createObjectNode()
+                .put("name", from)
+                .put("text", clear ? "" : String.join(" ", words)));
+        out.println(clear ? "status cleared" : "status set");
+        return 0;
+    }
+
     @Command(name = "done", description = "Mark a message that names you as handled without an answer.")
     int done(@Option(names = "--from", required = true, paramLabel = "NAME") String from,
              @Parameters(index = "0", paramLabel = "CONVERSATION") String conversation,

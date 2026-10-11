@@ -6,11 +6,16 @@ import java.io.ByteArrayInputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.net.URL;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.UUID;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
@@ -279,6 +284,54 @@ class CliTest {
             assertThat(references.map(path -> "references/" + path.getFileName()))
                     .isNotEmpty()
                     .allSatisfy(reference -> assertThat(main).contains("(" + reference + ")"));
+        }
+    }
+
+    @Test
+    void statusSetsAndClears() throws Exception {
+        String conversation = create(alice, "status", bob);
+
+        Result set = run("status", "--from", bob, conversation, "running", "mvn", "verify");
+        assertThat(set.code()).as(set.err()).isZero();
+        assertThat(set.out()).isEqualTo("status set\n");
+        assertThat(replayedStatus(conversation)).isEqualTo("running mvn verify");
+
+        Result cleared = run("status", "--from", bob, "--clear", conversation);
+        assertThat(cleared.out()).isEqualTo("status cleared\n");
+        assertThat(replayedStatus(conversation)).isNull();
+
+        assertThat(run("status", "--from", bob, conversation).code()).isEqualTo(2);
+        assertThat(run("status", "--from", bob, "--clear", conversation, "text").code()).isEqualTo(2);
+        Result stranger = run("status", "--from", carol, conversation, "hi");
+        assertThat(stranger.code()).isEqualTo(1);
+        assertThat(stranger.err()).contains("not a member");
+    }
+
+    /** The status line the event stream replays for the conversation, or null when it replays none within 2s. */
+    private String replayedStatus(String conversation) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder(url.toURI().resolve("api/conversations/" + conversation
+                + "/events?since=" + Long.MAX_VALUE)).build();
+        HttpResponse<Stream<String>> response = HttpClient.newHttpClient()
+                .send(request, HttpResponse.BodyHandlers.ofLines());
+        BlockingQueue<String> lines = new LinkedBlockingQueue<>();
+        Thread reader = Thread.ofVirtual().start(() -> {
+            try (Stream<String> body = response.body()) {
+                body.forEach(lines::add);
+            } catch (RuntimeException e) {
+                // Closed below
+            }
+        });
+        try {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            for (String line; (line = lines.poll(deadline - System.nanoTime(), TimeUnit.NANOSECONDS)) != null; ) {
+                if (line.startsWith("data:")) {
+                    return Hub.JSON.readTree(line.substring("data:".length())).path("text").asText(null);
+                }
+            }
+            return null;
+        } finally {
+            response.body().close();
+            reader.interrupt();
         }
     }
 

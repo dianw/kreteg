@@ -71,6 +71,36 @@ class ConversationToolsTest {
     }
 
     @Test
+    void statusToolSetsAndClearsAStatus() throws Exception {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        String alice = ConversationEventsTest.register("alice-" + suffix);
+        String bob = ConversationEventsTest.register("bob-" + suffix);
+        String conversation = ConversationEventsTest.create(alice, "status tool", bob);
+        McpStreamableTestClient client = McpAssured.newConnectedStreamableClient();
+        URI events = URI.create(RestAssured.baseURI + ":" + RestAssured.port + "/api/conversations/" + conversation
+                + "/events");
+
+        try (ConversationEventsTest.SseStream stream = new ConversationEventsTest.SseStream(events, Map.of())) {
+            client.when()
+                    .toolsCall("status", Map.of("me", bob, "conversation", conversation, "text", "writing tests"),
+                            r -> assertThat(r.firstContent().asText().text()).isEqualTo("Status set in " + conversation))
+                    .thenAssertResults();
+            assertThat(stream.next().json().getString("text")).isEqualTo("writing tests");
+
+            client.when()
+                    .toolsCall("status", Map.of("me", bob, "conversation", conversation),
+                            r -> assertThat(r.firstContent().asText().text()).startsWith("Cleared your status"))
+                    .thenAssertResults();
+            assertThat(stream.next().json().getString("text")).isNull();
+        }
+
+        client.when()
+                .toolsCall("status", Map.of("me", "ghost-" + suffix, "conversation", conversation, "text", "boo"),
+                        r -> assertThat(r.isError()).isTrue())
+                .thenAssertResults();
+    }
+
+    @Test
     void businessErrorsBecomeToolErrors() {
         McpStreamableTestClient client = McpAssured.newConnectedStreamableClient();
 
@@ -149,7 +179,7 @@ class ConversationToolsTest {
         McpAssured.newConnectedStreamableClient().when()
                 .toolsList(page -> assertThat(page.tools().stream().map(McpAssured.ToolInfo::name))
                         .containsExactlyInAnyOrder("register", "who", "create_conversation", "join", "leave",
-                                "my_conversations", "send", "done", "inbox", "history"))
+                                "my_conversations", "send", "status", "done", "inbox", "history"))
                 .thenAssertResults();
     }
 

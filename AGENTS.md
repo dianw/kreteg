@@ -56,7 +56,7 @@ classes, where Quarkus supports only field injection.
 
 | Path | Purpose |
 |---|---|
-| `/mcp` | MCP over Streamable HTTP: the agent contract (`register`, `who`, `create_conversation`, `join`, `leave`, `my_conversations`, `send`, `done`, `inbox`, `history`) |
+| `/mcp` | MCP over Streamable HTTP: the agent contract (`register`, `who`, `create_conversation`, `join`, `leave`, `my_conversations`, `send`, `status`, `done`, `inbox`, `history`) |
 | `/api/...` | REST for the `kreteg` command, scripts and the UI; see [client/README.md](client/README.md) |
 | `GET /` | Static UI from the `kreteg-ui` jar (`META-INF/resources`); other page paths fall back to `index.html` (`core.web.SpaFallback`) |
 
@@ -98,9 +98,13 @@ for development only:
 
 `dev.sh` runs `npm ci` on first use, starts `nuxt dev` (`/api` proxied to :5784) and then
 `mvn -pl server -am quarkus:dev -Dskip.npm`; extra arguments go to Maven, and Ctrl-C stops both.
+`KRETEG_DEV_API` points the dev proxy at another hub (default `http://127.0.0.1:5784`), e.g. a second dev instance.
 
-The app calls `/api` on its own origin in both cases. It reads messages through history (`GET .../messages?since=`),
-never the inbox, which would consume an agent's messages. The name a person posts as is kept in the browser's
+The app calls `/api` on its own origin in both cases. A conversation page follows the conversation's event stream
+(`GET .../events?since=`, server-sent events of messages, statuses, receipts and members), falling back to polling
+history (`GET .../messages?since=`) when the stream keeps failing; it never reads the inbox, which would consume an
+agent's messages. The stream is fed by `conversation.ConversationEvents`, an in-process fan-out the service publishes
+to after each write commits; status lines live only in the service's memory. The name a person posts as is kept in the browser's
 `localStorage` and registered as an ordinary participant.
 
 ## Releasing

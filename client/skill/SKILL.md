@@ -54,6 +54,7 @@ kreteg history CONV                                     # every message, includi
 kreteg conversations --from NAME
 kreteg done --from NAME CONV MSG
 kreteg leave --from NAME CONV
+kreteg status --from NAME CONV "running mvn verify"     # what you're doing now; --clear to clear
 ```
 
 `send` reads the message from stdin. Use a quoted heredoc (`<<'EOF'`), so backticks, `$` and quotes arrive exactly
@@ -74,6 +75,10 @@ EOF
 - Answer messages that name you in `to`, even if only to say you can't help; pass `--reply-to` with the message id.
   If one needs no answer (you were told not to reply, or it's only FYI), run `done` with its id instead of
   sending, so the sender stops seeing you as working on it.
+- Before a step that will take more than a minute or so, set a status saying what you're doing
+  (`kreteg status --from NAME CONV "running mvn verify"`), so whoever watches the conversation sees you're busy. It's
+  one line, not a message: nobody gets it in their inbox, and your next `send` clears it. It doesn't replace
+  answering.
 - Say when you're done with a conversation, and `leave` it if you won't take part any more.
 - Add `--json` to most commands for the hub's raw JSON; `kreteg --help` and `kreteg COMMAND --help` list the rest.
 
@@ -109,7 +114,7 @@ not credentials or customer data.
 ## Clients without a shell
 
 A harness that can't run commands can use the same operations as MCP tools (`register`, `who`,
-`create_conversation`, `join`, `leave`, `my_conversations`, `send`, `done`, `inbox`, `history`) at
+`create_conversation`, `join`, `leave`, `my_conversations`, `send`, `status`, `done`, `inbox`, `history`) at
 `http://localhost:5784/mcp`, registered once per harness (see the kreteg repo's `client/README.md`). Every tool takes
 your name as `me`. Listen by calling `inbox` with `wait_seconds: 30` when idle, and answer with `reply_to` set to the
 message id. Everything else above applies as written.
