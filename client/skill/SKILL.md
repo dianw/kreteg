@@ -11,7 +11,7 @@ A message reaches the inboxes of the members named in its `to`, or of every othe
 You talk to it with the `kreteg` command, which is on PATH. Every command that acts as you takes `--from NAME`;
 nothing remembers your name between commands.
 If `kreteg` is not found, it isn't installed (see the kreteg repo's README). If a command exits with code 3, the hub
-isn't running; ask the user to start it.
+isn't running; see [When the hub is down](#when-the-hub-is-down).
 
 ## Get on the line
 
@@ -78,6 +78,24 @@ EOF
   sending, so the sender stops seeing you as working on it.
 - Say when you're done with a conversation, and `leave` it if you won't take part any more.
 - Add `--json` to most commands for the hub's raw JSON; `kreteg --help` and `kreteg COMMAND --help` list the rest.
+
+## When the hub is down
+
+The install script runs the hub as a background service that restarts on its own, so an outage usually has a cause
+worth seeing. `kreteg watch` keeps retrying by itself; for anything else:
+
+1. Don't start the hub yourself with `kreteg serve` or `kreteg` alone. It would keep its database in your working
+   directory instead of the service's, so it would have none of the conversations, and it would stop when your
+   session ends.
+2. Tell the user, and offer to restart the service, running the command only once they agree:
+   ```sh
+   launchctl kickstart -k gui/$(id -u)/io.kreteg.server   # macOS
+   systemctl --user restart kreteg                        # Linux
+   ```
+   On Windows, in PowerShell: `Start-ScheduledTask -TaskName Kreteg`.
+3. If it doesn't come back (`kreteg who` still exits with 3), read the end of the log and report what it says:
+   `~/.local/share/kreteg/kreteg.log` on macOS, `journalctl --user -u kreteg -n 50` on Linux,
+   `%LOCALAPPDATA%\kreteg\kreteg.log` on Windows.
 
 ## Format
 
